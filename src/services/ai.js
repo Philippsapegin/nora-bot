@@ -136,11 +136,10 @@ class AiService {
         let text = response.text();
 
         // === CLEANUP (ОБЯЗАТЕЛЬНО!) ===
-        // Убираем "мысли вслух", из-за которых был глюк с магнитными бурями
-        text = text.replace(/^toolcode[\s\S]*?print\(.*?\)\s*/i, '');
-        text = text.replace(/^thought[\s\S]*?\n\n/i, '');
-        // Убираем markdown мусор
-        text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        // Убираем только технический мусор, не трогая текст сообщения
+        text = text.replace(/^toolcode[\s\S]*?print\(.*?\)\s*/i, ''); // Следы от поиска
+        text = text.replace(/^thought[\s\S]*?\n\n/i, ''); // Технический блок мыслей (если API его вернет явно)
+        text = text.replace(/```json/g, '').replace(/```/g, '').trim(); // Маркдаун обертки
         // ==============================
 
         // --- ИСТОЧНИКИ ---
