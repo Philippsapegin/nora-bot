@@ -101,16 +101,16 @@ bot.on('message', async (msg) => {
             return; 
         }
       } catch (e) {
-          // Если мы даже не можем проверить админа (например, бот забанен или нет прав), лучше уйти
-          console.error(`[SECURITY ERROR] Ошибка проверки прав в "${chatTitle}": ${e.message}`);
-          // На всякий случай пытаемся выйти, если ошибка критичная
-          if (e.message.includes('chat not found') || e.message.includes('kicked')) {
-             // Игнорим, мы и так не там
-          } else {
-             // Пытаемся выйти
-             bot.leaveChat(chatId).catch(() => {});
-          }
-      }
+        // Если ошибка проверки прав
+        console.error(`[SECURITY ERROR] Ошибка проверки прав в "${chatTitle}": ${e.message}`);
+        
+        // ВЫХОДИМ ТОЛЬКО ЕСЛИ ЧАТА БОЛЬШЕ НЕТ ИЛИ БОТА КИКНУЛИ
+        // При обычных сетевых ошибках (ETIMEDOUT, 502 и т.д.) - ОСТАЕМСЯ
+        if (e.message.includes('chat not found') || e.message.includes('kicked') || e.message.includes('Forbidden')) {
+           bot.leaveChat(chatId).catch(() => {});
+        } 
+        // Во всех остальных случаях (лаг API) — просто игнорируем и работаем дальше
+    }
   }
 
   // === ЛОГИКА ВЫХОДА ВСЛЕД ЗА АДМИНОМ (ХАТИКО) ===
