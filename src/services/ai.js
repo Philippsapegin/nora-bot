@@ -224,29 +224,32 @@ class AiService {
     });
   }
 
-  // === НОВЫЙ МЕТОД: ЧИСТЫЙ ПОИСК ===
-  async performSearch(query) {
-    if (!this.openai) return null;
-    try {
-        console.log(`[SEARCH] Запрос в Perplexity: ${query}`);
-        const completion = await this.openai.chat.completions.create({
-            model: config.openRouterSearchModel, // <--- Теперь берем из конфига
-            messages: [
-                { role: "system", content: `Current Date: ${this.getCurrentTime()}. You are a search engine. Find the latest information. Provide citations.` },
-                { role: "user", content: query }
-            ],
-            temperature: 0.1
-        });
-        
-        // Можем раскомментировать, если хотим считать статистику поиска
-        // this.countRequest('openrouter-search'); 
-        
-        return completion.choices[0].message.content;
-    } catch (e) {
-        console.error(`[SEARCH FAIL] ${e.message}`);
-        return null;
-    }
+// === НОВЫЙ МЕТОД: ЧИСТЫЙ ПОИСК ===
+async performSearch(query) {
+  if (!this.openai) return null;
+  try {
+      console.log(`[SEARCH] Запрос в Perplexity: ${query}`);
+      const completion = await this.openai.chat.completions.create({
+          model: config.openRouterSearchModel,
+          messages: [
+              { role: "system", content: `Current Date: ${this.getCurrentTime()}. You are a search engine. Find the latest information. ALWAYS provide links/citations in your response.` },
+              { role: "user", content: query }
+          ],
+          temperature: 0.1
+      });
+      
+      const result = completion.choices[0].message.content;
+      
+      // !!! ЛОГ ДЛЯ ОТЛАДКИ !!!
+      // Мы увидим в консоли, вернула ли Perplexity ссылки вообще
+      console.log(`[SEARCH RAW RESULT]: ${result.slice(0, 200)}...`); 
+
+      return result;
+  } catch (e) {
+      console.error(`[SEARCH FAIL] ${e.message}`);
+      return null;
   }
+}
   
 // === ОСНОВНОЙ ОТВЕТ ===
 async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image/jpeg", userInstruction = "", userProfile = null, isSpontaneous = false) {
@@ -272,14 +275,19 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   if (currentMessage.replyText) replyContext = `!!! ПОЛЬЗОВАТЕЛЬ ОТВЕТИЛ НА СООБЩЕНИЕ:\n"${currentMessage.replyText}"`;
   if (userInstruction) personalInfo += `\n!!! СПЕЦ-ИНСТРУКЦИЯ !!!\n${userInstruction}\n`;
   
-  // Внедряем найденную инфу в "память" бота перед ответом
-  if (searchResultText) {
-      personalInfo += `
-!!! ВАЖНАЯ ИНФОРМАЦИЯ ИЗ ПОИСКА !!!
+// Внедряем найденную инфу в "память" бота перед ответом
+if (searchResultText) {
+  personalInfo += `
+!!! РЕЗУЛЬТАТЫ ПОИСКА (SEARCH RESULTS) !!!
 ${searchResultText}
-ИНСТРУКЦИЯ: Используй эти данные и ссылки для ответа, но сохраняй свой стиль.
+
+ИНСТРУКЦИЯ ПО ИСТОЧНИКАМ (КРИТИЧНО):
+1. Используй факты выше для ответа.
+2. В конце ответа ТЫ ОБЯЗАН добавить раздел "Источники:" и перечислить ссылки (URL) из текста поиска.
+3. Если ссылок в тексте поиска нет — не выдумывай их.
+4. Ссылки должны быть кликабельными: [Название](URL).
 `;
-  }
+}
 
   if (userProfile) {
       const score = userProfile.relationship || 50;
