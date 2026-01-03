@@ -207,17 +207,29 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   const searchTriggers = /(курс|погода|новости|цена|стоимость|сколько стоит|найди|погугли|информация о|события|счет матча|кто такой|что такое|где купить|дата выхода|когда)/i;
   const needsSearch = searchTriggers.test(currentMessage.text);
   
-  // !!! РОУТЕР: Если выбран Google Native Search и нужен поиск — сразу идем в натив !!!
-  if (config.searchProvider === 'google' && needsSearch) {
-      console.log(`[ROUTER] Выбран Native Google Search. Переход в режим Native.`);
-      return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous);
-  }
+// 1. ПОПЫТКА RAG (TAVILY / PERPLEXITY)
+    // Пробуем искать, если провайдер НЕ google
+    let searchResultText = "";
+    if (needsSearch && config.searchProvider !== 'google') {
+        searchResultText = await this.performSearch(currentMessage.text);
+    }
 
-  // Иначе пробуем RAG (Tavily/Perplexity)
-  let searchResultText = "";
-  if (needsSearch && (config.searchProvider === 'tavily' || config.searchProvider === 'perplexity')) {
-      searchResultText = await this.performSearch(currentMessage.text);
-  }
+    // 2. УМНЫЙ FALLBACK НА GOOGLE SEARCH
+    // Если:
+    // a) Нужен поиск
+    // b) RAG ничего не нашел (нет ключа Tavily или ошибка)
+    // c) У нас есть ключи Google
+    // -> То идем в Google Native
+    if (needsSearch && !searchResultText && this.keys.length > 0) {
+        console.log(`[ROUTER] Tavily/Perplexity недоступен или выключен. Переключаюсь на Google Native Search.`);
+        return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous);
+    }
+    
+    // 3. ПРЯМОЙ ВЫБОР GOOGLE
+    // Если в конфиге явно стоит 'google', мы попадем сюда (так как step 1 пропущен)
+    if (needsSearch && config.searchProvider === 'google' && this.keys.length > 0) {
+         return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous);
+    }
 
   // 2. СБОРКА ПРОМПТА
   const relevantHistory = history.slice(-20); 
