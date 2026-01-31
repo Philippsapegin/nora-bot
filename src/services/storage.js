@@ -12,7 +12,9 @@ class StorageService {
     this.saveDebounced = debounce(this._saveToFile.bind(this), 5000);
     this.saveProfilesDebounced = debounce(this._saveProfilesToFile.bind(this), 5000);
     this.data = { chats: {} };
-    this.profiles = {}; 
+    this.profiles = {};
+    // Очередь обновлений профилей для предотвращения race condition
+    this.profileUpdateQueue = Promise.resolve();
 
     // 1. Создаем структуру файлов, если их нет
     this.ensureFile(DB_PATH, '{"chats": {}}');
@@ -242,24 +244,53 @@ class StorageService {
     return result;
   }
 
-  // Массовое обновление (после анализа)
+  // Массовое обновление (после анализа) с очередью для предотвращения race condition
   bulkUpdateProfiles(chatId, updatesMap) {
+    // Добавляем обновление в очередь, чтобы избежать одновременных изменений
+    this.profileUpdateQueue = this.profileUpdateQueue.then(() => {
+      this._applyProfileUpdates(chatId, updatesMap);
+    }).catch(err => {
+      console.error("[PROFILE UPDATE ERROR]", err);
+    });
+  }
+
+  // Внутренний метод применения обновлений
+  _applyProfileUpdates(chatId, updatesMap) {
     if (!this.profiles[chatId]) this.profiles[chatId] = {};
-    
+
     for (const [userId, data] of Object.entries(updatesMap)) {
         const current = this.profiles[chatId][userId] || { realName: null, facts: "", attitude: "Нейтральное", relationship: 50 };
-        
+
         if (data.realName && data.realName !== "Неизвестно") current.realName = data.realName;
         if (data.facts) current.facts = data.facts;
         if (data.attitude) current.attitude = data.attitude;
-
         if (data.location) current.location = data.location;
-        
+
+        // Валидация изменения репутации
         if (data.relationship !== undefined) {
-          const score = parseInt(data.relationship, 10);
-          if (!isNaN(score)) current.relationship = score;
-     }
-        
+          const newScore = parseInt(data.relationship, 10);
+          if (!isNaN(newScore)) {
+            const oldScore = current.relationship || 50;
+            const delta = newScore - oldScore;
+
+            // Ограничиваем изменения: +1..+3 за позитив, -5..-10 за негатив
+            let clampedDelta = delta;
+            if (delta > 0) {
+              clampedDelta = Math.min(delta, 3); // Максимум +3
+            } else if (delta < 0) {
+              clampedDelta = Math.max(delta, -10); // Максимум -10
+              if (clampedDelta > -5 && clampedDelta < 0) clampedDelta = -5; // Минимум -5 если негатив
+            }
+
+            // Применяем изменение с ограничением 0-100
+            current.relationship = Math.max(0, Math.min(100, oldScore + clampedDelta));
+
+            if (delta !== clampedDelta) {
+              console.log(`[RELATIONSHIP CLAMP] ${userId}: AI хотел ${delta > 0 ? '+' : ''}${delta}, применено ${clampedDelta > 0 ? '+' : ''}${clampedDelta}`);
+            }
+          }
+        }
+
         this.profiles[chatId][userId] = current;
     }
     this.saveProfiles();

@@ -13,3 +13,6 @@ instructions.json
 
 # Системные файлы
 .DS_Store
+
+# Локальные заметки
+todo.txt

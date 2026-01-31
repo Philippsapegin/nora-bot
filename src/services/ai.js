@@ -399,24 +399,6 @@ async shouldAnswer(lastMessages) {
     return text && text.toUpperCase().includes('YES');
 }
 
-async parseReminder(userText, contextText) { 
-    return this.runLogicModel(prompts.parseReminder(this.getCurrentTime(), userText, contextText)); 
-}
-
-// Транскрибация - лучше оставить Native как было, или перенести на API если модель поддерживает
-async transcribeAudio(audioBuffer, userName, mimeType) {
-    try {
-        return await this.executeNativeWithRetry(async () => {
-          const parts = [ { inlineData: { mimeType: mimeType, data: audioBuffer.toString("base64") } }, { text: prompts.transcription(userName) }];
-          const result = await this.nativeModel.generateContent(parts);
-          let text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-          const first = text.indexOf('{'), last = text.lastIndexOf('}');
-          if (first !== -1 && last !== -1) text = text.substring(first, last + 1);
-          return JSON.parse(text);
-        });
-    } catch (e) { return null; }
-}
-
 async generateProfileDescription(profileData, targetName) {
     if (this.openai) {
       try {
