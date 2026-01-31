@@ -145,7 +145,7 @@ class AiService {
       minute: '2-digit'
     });
     // Явно указываем базу для расчетов
-    return `${time} (Базовое время: Екатеринбург, UTC+5)`;
+    return `${time} (UTC+5)`;
   }
 
 // === УНИВЕРСАЛЬНЫЙ ПОИСК ===
@@ -244,7 +244,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
       const score = userProfile.relationship || 50;
       let relationText = score <= 20 ? "СТАТУС: ВРАГ." : score >= 80 ? "СТАТУС: БРАТАН." : "СТАТУС: НЕЙТРАЛЬНО.";
       personalInfo += `\n--- ДОСЬЕ ---\nФакты: ${userProfile.facts || "Нет"}\n`;
-      if (userProfile.location) personalInfo += `📍 ЛОКАЦИЯ: ${userProfile.location} (Учитывай это!)\n`;
+      if (userProfile.location) personalInfo += `📍 Локация: ${userProfile.location}\n`;
       personalInfo += `${relationText}\n-----------------\n`;
   }
 
@@ -310,7 +310,7 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
         const score = userProfile.relationship || 50;
         let relationText = score <= 20 ? "СТАТУС: ВРАГ." : score >= 80 ? "СТАТУС: БРАТАН." : "СТАТУС: НЕЙТРАЛЬНО.";
         personalInfo += `\n--- ДОСЬЕ ---\nФакты: ${userProfile.facts || "Нет"}\n`;
-        if (userProfile.location) personalInfo += `📍 ЛОКАЦИЯ: ${userProfile.location} (Учитывай это!)\n`;
+        if (userProfile.location) personalInfo += `📍 Локация: ${userProfile.location}\n`;
         personalInfo += `${relationText}\n-----------------\n`;
     }
 
