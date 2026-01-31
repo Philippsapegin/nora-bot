@@ -203,33 +203,29 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   this.resetStatsIfNeeded();
   console.log(`[DEBUG AI] getResponse вызван.`);
 
-  // 1. АНАЛИЗ НА ПОИСК
-  const searchTriggers = /(курс|погода|новости|цена|стоимость|сколько стоит|найди|погугли|информация о|события|счет матча|кто такой|что такое|где купить|дата выхода|когда)/i;
-  const needsSearch = searchTriggers.test(currentMessage.text);
-  
-  // 1. ПОПЫТКА RAG (TAVILY / PERPLEXITY)
-    // Пробуем искать, если провайдер НЕ google
-    let searchResultText = "";
-    if (needsSearch && config.searchProvider !== 'google') {
-        searchResultText = await this.performSearch(currentMessage.text);
-    }
+  // 1. AI ОПРЕДЕЛЯЕТ НУЖЕН ЛИ ПОИСК
+  const recentHistory = history.slice(-5).map(m => `${m.role}: ${m.text}`).join('\n');
+  const searchDecision = await this.checkSearchNeeded(
+      currentMessage.text,
+      recentHistory,
+      chatProfile?.topic || null
+  );
 
-    // 2. УМНЫЙ FALLBACK НА GOOGLE SEARCH
-    // Если:
-    // a) Нужен поиск
-    // b) RAG ничего не нашел (нет ключа Tavily или ошибка)
-    // c) У нас есть ключи Google
-    // -> То идем в Google Native
-    if (needsSearch && !searchResultText && this.keys.length > 0) {
-        console.log(`[ROUTER] Tavily/Perplexity недоступен или выключен. Переключаюсь на Google Native Search.`);
-        return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
-    }
+  let searchResultText = "";
 
-    // 3. ПРЯМОЙ ВЫБОР GOOGLE
-    // Если в конфиге явно стоит 'google', мы попадем сюда (так как step 1 пропущен)
-    if (needsSearch && config.searchProvider === 'google' && this.keys.length > 0) {
-         return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
-    }
+  if (searchDecision.needsSearch && searchDecision.searchQuery) {
+      // 2. ПОИСК ЧЕРЕЗ TAVILY / PERPLEXITY
+      if (config.searchProvider !== 'google') {
+          searchResultText = await this.performSearch(searchDecision.searchQuery);
+      }
+
+      // 3. FALLBACK НА GOOGLE NATIVE SEARCH
+      // Если Tavily/Perplexity недоступен или провайдер = google
+      if (!searchResultText && this.keys.length > 0) {
+          console.log(`[ROUTER] Переключаюсь на Google Native Search.`);
+          return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
+      }
+  }
 
   // 2. СБОРКА ПРОМПТА
   const relevantHistory = history.slice(-20); 
@@ -295,24 +291,39 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
 
 // Helper для Native вызова (чтобы не дублировать код)
 async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile = null) {
-    // Собираем промпт заново, но без RAG поиска (Google сам найдет)
-    // Для простоты здесь можно собрать минимальный промпт или дублировать логику сборки
-    // Я сделаю упрощенную сборку на основе переданных параметров
     const relevantHistory = history.slice(-20);
     const contextStr = relevantHistory.map(m => `${m.role}: ${m.text}`).join('\n');
+
+    // Собираем полную информацию о пользователе (как в основном методе)
     let personalInfo = "";
-    if (userProfile) personalInfo += `\nФакты: ${userProfile.facts || ""}\n`;
+    let replyContext = "";
+
+    if (currentMessage.replyText) {
+        replyContext = `!!! ПОЛЬЗОВАТЕЛЬ ОТВЕТИЛ НА СООБЩЕНИЕ:\n"${currentMessage.replyText}"`;
+    }
+
+    if (userInstruction) {
+        personalInfo += `\n!!! СПЕЦ-ИНСТРУКЦИЯ !!!\n${userInstruction}\n`;
+    }
+
+    if (userProfile) {
+        const score = userProfile.relationship || 50;
+        let relationText = score <= 20 ? "СТАТУС: ВРАГ." : score >= 80 ? "СТАТУС: БРАТАН." : "СТАТУС: НЕЙТРАЛЬНО.";
+        personalInfo += `\n--- ДОСЬЕ ---\nФакты: ${userProfile.facts || "Нет"}\n`;
+        if (userProfile.location) personalInfo += `📍 ЛОКАЦИЯ: ${userProfile.location} (Учитывай это!)\n`;
+        personalInfo += `${relationText}\n-----------------\n`;
+    }
 
     const fullPromptText = prompts.mainChat({
-      time: this.getCurrentTime(),
-      isSpontaneous: isSpontaneous,
-      userMessage: currentMessage.text,
-      replyContext: currentMessage.replyText ? `Reply to: ${currentMessage.replyText}` : "",
-      history: contextStr,
-      personalInfo: personalInfo,
-      senderName: currentMessage.sender,
-      chatContext: chatProfile
-  });
+        time: this.getCurrentTime(),
+        isSpontaneous: isSpontaneous,
+        userMessage: currentMessage.text,
+        replyContext: replyContext,
+        history: contextStr,
+        personalInfo: personalInfo,
+        senderName: currentMessage.sender,
+        chatContext: chatProfile
+    });
 
     return this.executeNativeWithRetry(async () => {
       let promptParts = [];
@@ -378,8 +389,31 @@ async runLogicText(promptText) {
     return null; 
 }
 
-async analyzeUserImmediate(lastMessages, currentProfile) { 
-    return this.runLogicModel(prompts.analyzeImmediate(currentProfile, lastMessages)); 
+async analyzeUserImmediate(lastMessages, currentProfile) {
+    return this.runLogicModel(prompts.analyzeImmediate(currentProfile, lastMessages));
+}
+
+// Определение необходимости поиска (AI-решение вместо regex)
+async checkSearchNeeded(userMessage, recentHistory, chatTopic) {
+    const prompt = prompts.shouldSearch(
+        this.getCurrentTime(),
+        userMessage,
+        recentHistory,
+        chatTopic
+    );
+
+    try {
+        const result = await this.runLogicModel(prompt);
+        if (result && typeof result.needsSearch === 'boolean') {
+            console.log(`[SEARCH CHECK] needsSearch=${result.needsSearch}, query="${result.searchQuery}", reason="${result.reason}"`);
+            return result;
+        }
+    } catch (e) {
+        console.error(`[SEARCH CHECK ERROR] ${e.message}`);
+    }
+
+    // Fallback: не искать если AI не ответил
+    return { needsSearch: false, searchQuery: null, reason: "fallback" };
 }
 
 async analyzeBatch(messagesBatch, currentProfiles) {
@@ -447,22 +481,9 @@ async generateFlavorText(task, result) {
 
   // === ПАРСИНГ НАПОМИНАНИЯ (С КОНТЕКСТОМ) ===
   async parseReminder(userText, contextText = "") {
-    const requestLogic = async () => {
-        this.countRequest('gemma');
-        const now = this.getCurrentTime(); 
-        // Передаем теперь три аргумента: Время, Текст юзера, Текст сообщения-исходника
-        const prompt = prompts.parseReminder(now, userText, contextText);
-        
-        const result = await this.logicModel.generateContent(prompt);
-        let text = result.response.text();
-        text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const firstBrace = text.indexOf('{');
-        const lastBrace = text.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1) text = text.substring(firstBrace, lastBrace + 1);
-        
-        return JSON.parse(text);
-    };
-    try { return await this.executeWithRetry(requestLogic, 'gemma'); } catch (e) { return null; }
+    const now = this.getCurrentTime();
+    const prompt = prompts.parseReminder(now, userText, contextText);
+    return this.runLogicModel(prompt);
   }
 }
 
