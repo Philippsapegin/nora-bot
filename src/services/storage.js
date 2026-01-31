@@ -5,6 +5,7 @@ const DB_PATH = path.join(__dirname, '../../data/db.json');
 const INSTRUCTIONS_PATH = path.join(__dirname, '../../data/instructions.json');
 const PROFILES_PATH = path.join(__dirname, '../../data/profiles.json');
 const CHAT_PROFILES_PATH = path.join(__dirname, '../../data/chatProfiles.json');
+const STATS_PATH = path.join(__dirname, '../../data/stats.json');
 const debounce = require('lodash.debounce');
 
 class StorageService {
@@ -13,9 +14,11 @@ class StorageService {
     this.saveDebounced = debounce(this._saveToFile.bind(this), 5000);
     this.saveProfilesDebounced = debounce(this._saveProfilesToFile.bind(this), 5000);
     this.saveChatProfilesDebounced = debounce(this._saveChatProfilesToFile.bind(this), 5000);
+    this.saveStatsDebounced = debounce(this._saveStatsToFile.bind(this), 3000); // Статистика чаще сохраняется
     this.data = { chats: {} };
     this.profiles = {};
     this.chatProfiles = {};
+    this.stats = this._getDefaultStats();
     // Очередь обновлений профилей для предотвращения race condition
     this.profileUpdateQueue = Promise.resolve();
 
@@ -24,9 +27,33 @@ class StorageService {
     this.ensureFile(INSTRUCTIONS_PATH, '{}');
     this.ensureFile(PROFILES_PATH, '{}');
     this.ensureFile(CHAT_PROFILES_PATH, '{}');
+    this.ensureFile(STATS_PATH, JSON.stringify(this._getDefaultStats()));
 
     // 2. Загружаем данные в память
     this.load();
+  }
+
+  _getDefaultStats() {
+    return {
+      today: {
+        date: this._getTodayDate(),
+        smart: 0,
+        logic: 0,
+        search: 0,
+        google: []
+      },
+      history: [],  // Архив дней: [{ date, smart, logic, search, google }]
+      allTime: {
+        smart: 0,
+        logic: 0,
+        search: 0,
+        google: 0
+      }
+    };
+  }
+
+  _getTodayDate() {
+    return new Date().toISOString().split('T')[0]; // "2026-01-31"
   }
 
   ensureFile(filePath, defaultContent) {
@@ -57,6 +84,24 @@ class StorageService {
     } catch (e) {
       console.error("Ошибка чтения ChatProfiles, сброс.");
       this.chatProfiles = {};
+    }
+    // Грузим статистику
+    try {
+      const loaded = JSON.parse(fs.readFileSync(STATS_PATH, 'utf-8'));
+      // Миграция со старого формата (если есть lastResetDate вместо today)
+      if (loaded.lastResetDate !== undefined && !loaded.today) {
+        console.log("[STATS] Миграция со старого формата...");
+        this.stats = this._getDefaultStats();
+      } else {
+        this.stats = loaded;
+        // Проверяем наличие всех полей
+        if (!this.stats.today) this.stats.today = this._getDefaultStats().today;
+        if (!this.stats.history) this.stats.history = [];
+        if (!this.stats.allTime) this.stats.allTime = { smart: 0, logic: 0, search: 0, google: 0 };
+      }
+    } catch (e) {
+      console.error("Ошибка чтения Stats, сброс.");
+      this.stats = this._getDefaultStats();
     }
   }
 
@@ -127,8 +172,18 @@ class StorageService {
     } catch (e) { console.error("Ошибка записи ChatProfiles:", e); }
   }
 
+  _saveStatsToFile() {
+    try {
+      fs.writeFileSync(STATS_PATH, JSON.stringify(this.stats, null, 2));
+    } catch (e) { console.error("Ошибка записи Stats:", e); }
+  }
+
   saveChatProfiles() {
     this.saveChatProfilesDebounced();
+  }
+
+  saveStats() {
+    this.saveStatsDebounced();
   }
 
   // Принудительное сохранение (для выхода из процесса)
@@ -136,6 +191,129 @@ class StorageService {
     this.saveDebounced.flush();
     this.saveProfilesDebounced.flush();
     this.saveChatProfilesDebounced.flush();
+    this.saveStatsDebounced.flush();
+  }
+
+  // === СТАТИСТИКА ===
+
+  // Получить статистику за сегодня
+  getStats() {
+    this.resetStatsIfNeeded();
+    return this.stats.today;
+  }
+
+  // Получить полную статистику (для отчёта)
+  getFullStats() {
+    this.resetStatsIfNeeded();
+    return {
+      today: this.stats.today,
+      week: this._calcPeriodStats(7),
+      month: this._calcPeriodStats(30),
+      allTime: this.stats.allTime
+    };
+  }
+
+  // Подсчёт статистики за период (последние N дней)
+  _calcPeriodStats(days) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+    const result = { smart: 0, logic: 0, search: 0, google: 0 };
+
+    // Добавляем сегодняшний день
+    result.smart += this.stats.today.smart;
+    result.logic += this.stats.today.logic;
+    result.search += this.stats.today.search;
+    result.google += (this.stats.today.google || []).reduce((sum, g) => sum + g.count, 0);
+
+    // Добавляем из истории
+    for (const day of this.stats.history) {
+      if (day.date >= cutoffStr) {
+        result.smart += day.smart || 0;
+        result.logic += day.logic || 0;
+        result.search += day.search || 0;
+        result.google += day.google || 0;
+      }
+    }
+
+    return result;
+  }
+
+  // Инициализировать google-ключи (вызывается из ai.js при старте)
+  initGoogleStats(keyCount) {
+    this.resetStatsIfNeeded();
+    // Если количество ключей изменилось - пересоздаём массив
+    if (!this.stats.today.google || this.stats.today.google.length !== keyCount) {
+      this.stats.today.google = Array(keyCount).fill(null).map(() => ({ count: 0, status: true }));
+      this.saveStats();
+    }
+  }
+
+  // Увеличить счётчик (smart, logic, search)
+  incrementStat(type) {
+    this.resetStatsIfNeeded();
+    if (this.stats.today[type] !== undefined) {
+      this.stats.today[type]++;
+      this.stats.allTime[type]++;
+      this.saveStats();
+    }
+  }
+
+  // Увеличить счётчик google-ключа
+  incrementGoogleStat(keyIndex) {
+    this.resetStatsIfNeeded();
+    if (this.stats.today.google[keyIndex]) {
+      this.stats.today.google[keyIndex].count++;
+      this.stats.allTime.google++;
+      this.saveStats();
+    }
+  }
+
+  // Пометить google-ключ как исчерпанный
+  markGoogleKeyExhausted(keyIndex) {
+    if (this.stats.today.google[keyIndex]) {
+      this.stats.today.google[keyIndex].status = false;
+      this.saveStats();
+    }
+  }
+
+  // Сброс статистики в полночь (с архивацией)
+  resetStatsIfNeeded() {
+    const todayDate = this._getTodayDate();
+    if (this.stats.today.date !== todayDate) {
+      // Архивируем вчерашний день
+      const yesterday = this.stats.today;
+      const googleTotal = (yesterday.google || []).reduce((sum, g) => sum + g.count, 0);
+
+      this.stats.history.unshift({
+        date: yesterday.date,
+        smart: yesterday.smart,
+        logic: yesterday.logic,
+        search: yesterday.search,
+        google: googleTotal
+      });
+
+      // Храним максимум 90 дней истории
+      if (this.stats.history.length > 90) {
+        this.stats.history = this.stats.history.slice(0, 90);
+      }
+
+      // Сбрасываем сегодняшний день
+      const keyCount = (yesterday.google || []).length;
+      this.stats.today = {
+        date: todayDate,
+        smart: 0,
+        logic: 0,
+        search: 0,
+        google: Array(keyCount).fill(null).map(() => ({ count: 0, status: true }))
+      };
+
+      this.saveStats();
+      console.log("[STATS] Новый день — статистика архивирована и сброшена.");
+      return true;
+    }
+    return false;
   }
 
   // Проверка существования без создания (для уведомлений)

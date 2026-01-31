@@ -515,11 +515,9 @@ _ver: ${config.version}_
 
   // === СТАТИСТИКА ===
   if (cleanText === 'сыч стата' || cleanText === 'сыч статистика') {
-    const stats = ai.getStatsReport();
-    const report = `**Статистика за сутки:**\n${stats}`;
-    // ИСПРАВЛЕНИЕ: Отвечаем реплаем, это безопаснее для комментариев каналов
+    const report = ai.getStatsReport();
     return bot.sendMessage(chatId, report, getReplyOptions(msg));
-}
+  }
 
   // === НАПОМИНАЛКИ ===
   if (isDirectlyCalled && (cleanText.includes("напомни") || cleanText.includes("напоминай"))) {

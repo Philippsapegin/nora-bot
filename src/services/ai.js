@@ -4,6 +4,7 @@ const prompts = require('../core/prompts');
 const axios = require('axios');
 const OpenAI = require('openai');
 const { tavily } = require('@tavily/core'); // Клиент Tavily
+const storage = require('./storage');
 
 class AiService {
   constructor() {
@@ -21,20 +22,14 @@ class AiService {
     this.tavilyClient = config.tavilyKey ? tavily({ apiKey: config.tavilyKey }) : null;
 
     // 3. Google Native (Fallback)
-    this.keyIndex = 0; 
+    this.keyIndex = 0;
     this.keys = config.geminiKeys;
-    this.usingFallback = false; 
-    this.bot = null; 
+    this.usingFallback = false;
+    this.bot = null;
 
-    // === СТАТИСТИКА ===
-    this.stats = { 
-        smart: 0, 
-        logic: 0, 
-        search: 0,
-        google: this.keys.map(() => ({ count: 0, status: true }))
-    };
-    this.lastResetDate = new Date().getDate(); 
-    
+    // === СТАТИСТИКА (теперь персистентная через storage) ===
+    storage.initGoogleStats(this.keys.length);
+
     if (this.keys.length === 0) console.warn("WARNING: Нет ключей Gemini в .env! Fallback не сработает.");
     this.initNativeModel();
   }
@@ -49,30 +44,57 @@ class AiService {
     }
   }
 
-  // Сброс статистики в полночь
+  // Сброс статистики в полночь (проверка через storage)
   resetStatsIfNeeded() {
-    const today = new Date().getDate();
-    if (today !== this.lastResetDate) {
-        this.stats = { smart: 0, logic: 0, search: 0, google: this.keys.map(() => ({ count: 0, status: true })) };
-        this.lastResetDate = today;
-        
-        if (this.usingFallback) {
-            this.usingFallback = false;
-            this.keyIndex = 0;
-            this.initNativeModel();
-            this.notifyAdmin("🌙 **Новый день!**\nЛимиты сброшены. Возврат в основной режим.");
-        }
+    const wasReset = storage.resetStatsIfNeeded();
+    if (wasReset && this.usingFallback) {
+      this.usingFallback = false;
+      this.keyIndex = 0;
+      this.initNativeModel();
+      this.notifyAdmin("🌙 **Новый день!**\nЛимиты сброшены. Возврат в основной режим.");
     }
   }
 
   getStatsReport() {
-  this.resetStatsIfNeeded();
-  const mode = this.usingFallback ? "⚠️ FALLBACK (Google Native)" : "⚡ API MODE";
+    this.resetStatsIfNeeded();
+    const { today, week, month, allTime } = storage.getFullStats();
+    const mode = this.usingFallback ? "⚠️ FALLBACK" : "⚡️ API";
 
-  const apiText = `🌐 **API (${config.aiBaseUrl}):**\n   Smart: ${this.stats.smart}\n   Logic: ${this.stats.logic}\n   Search: ${this.stats.search}`;
-  const googleRows = this.stats.google.map((s, i) => `   🔑${i + 1}: ${s.status ? "🟢" : "🔴"} ${s.count}`).join('\n');
+    // Форматирование даты (31.01)
+    const dateStr = today.date ? today.date.split('-').reverse().slice(0, 2).join('.') : '--';
 
-  return `Режим: ${mode}\n\n${apiText}\n\n💎 **Google Native:**\n${googleRows}`;
+    // Сегодня — подробно
+    const googleRows = (today.google || []).map((s, i) =>
+      `${i + 1}: ${s.status ? "🟢" : "🔴"} ${s.count}`
+    ).join('\n');
+
+    const todaySection = [
+      `Сегодня ${dateStr}:`,
+      `Режим: ${mode}`,
+      ``,
+      `• API`,
+      `Smart: ${today.smart}`,
+      `Logic: ${today.logic}`,
+      `Search: ${today.search}`,
+      ``,
+      `• Google Native:`,
+      googleRows
+    ].join('\n');
+
+    // Неделя, месяц, всё время — кратко
+    const weekSection = `Неделя: API ${week.smart + week.logic} | Google ${week.google} | Поиск ${week.search}`;
+    const monthSection = `Месяц: API ${month.smart + month.logic} | Google ${month.google} | Поиск ${month.search}`;
+
+    const allTimeTotal = allTime.smart + allTime.logic + allTime.google;
+    const allTimeSection = `Всего: ${this._formatNumber(allTimeTotal)} запросов`;
+
+    return `${todaySection}\n\n${weekSection}\n${monthSection}\n${allTimeSection}`;
+  }
+
+  _formatNumber(num) {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return String(num);
   }
 
   initNativeModel() {
@@ -101,8 +123,8 @@ class AiService {
   }
 
   rotateNativeKey() {
-    if (this.stats.google[this.keyIndex]) this.stats.google[this.keyIndex].status = false;
-    
+    storage.markGoogleKeyExhausted(this.keyIndex);
+
     console.log(`[AI WARNING] Native Key #${this.keyIndex + 1} исчерпан.`);
     this.keyIndex++;
 
@@ -115,16 +137,16 @@ class AiService {
   }
 
   async executeNativeWithRetry(apiCallFn) {
-    const maxAttempts = this.keys.length * 2; 
+    const maxAttempts = this.keys.length * 2;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            if (this.stats.google[this.keyIndex]) this.stats.google[this.keyIndex].count++;
+            storage.incrementGoogleStat(this.keyIndex);
             return await apiCallFn();
         } catch (error) {
             const isQuotaError = error.message.includes('429') || error.message.includes('Quota') || error.message.includes('403');
             if (isQuotaError) {
-                this.rotateNativeKey(); 
+                this.rotateNativeKey();
                 continue;
             } else {
                 throw error;
@@ -161,7 +183,7 @@ async performSearch(query) {
               max_results: 3,
               include_answer: true 
           });
-          this.stats.search++;
+          storage.incrementStat('search');
           
           let resultText = "";
           if (response.answer) resultText += `Краткий ответ Tavily: ${response.answer}\n\n`;
@@ -187,7 +209,7 @@ async performSearch(query) {
               ],
               temperature: 0.1
           });
-          this.stats.search++;
+          storage.incrementStat('search');
           return completion.choices[0].message.content;
       } catch (e) {
           console.error(`[PERPLEXITY FAIL] ${e.message}`);
@@ -278,7 +300,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
               temperature: 0.9,
           });
           
-          this.stats.smart++; 
+          storage.incrementStat('smart'); 
           return completion.choices[0].message.content.replace(/^thought[\s\S]*?\n\n/i, ''); 
       } catch (e) {
           console.error(`[API SMART FAIL] ${e.message}. Fallback to Native...`);
@@ -358,7 +380,7 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
                 messages: [{ role: "user", content: promptJson }],
                 response_format: { type: "json_object" }
             });
-            this.stats.logic++;
+            storage.incrementStat('logic');
             return JSON.parse(completion.choices[0].message.content);
         } catch (e) {}
     }
@@ -382,7 +404,7 @@ async runLogicText(promptText) {
               model: config.logicModel,
               messages: [{ role: "user", content: promptText }]
           });
-          this.stats.logic++;
+          storage.incrementStat('logic');
           return completion.choices[0].message.content;
         } catch (e) {}
     }
@@ -440,7 +462,7 @@ async generateProfileDescription(profileData, targetName) {
     if (this.openai) {
       try {
           const completion = await this.openai.chat.completions.create({ model: config.mainModel, messages: [{ role: "user", content: prompts.profileDescription(targetName, profileData) }] });
-          this.stats.smart++; return completion.choices[0].message.content;
+          storage.incrementStat('smart'); return completion.choices[0].message.content;
       } catch(e) {}
     }
     return "Не знаю такого.";
@@ -450,7 +472,7 @@ async generateFlavorText(task, result) {
   if (this.openai) {
       try {
           const completion = await this.openai.chat.completions.create({ model: config.mainModel, messages: [{ role: "user", content: prompts.flavor(task, result) }] });
-          this.stats.smart++; return completion.choices[0].message.content.trim().replace(/^["']|["']$/g, '');
+          storage.incrementStat('smart'); return completion.choices[0].message.content.trim().replace(/^["']|["']$/g, '');
       } catch(e) {}
   }
   return `${result}`;
