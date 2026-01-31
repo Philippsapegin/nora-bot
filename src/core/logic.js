@@ -548,13 +548,25 @@ _ver: ${config.version}_
 
   // === ФИЧИ ===
   if (hasTriggerWord) {
-      // Команда "Сыч, этот чат про..."
-      const chatTopicMatch = cleanText.match(/(?:этот чат про|чат про|мы тут|здесь мы)\s+(.+)/);
+      // Команда "Сыч, этот чат про..." — используем оригинальный текст (не lowercase)
+      const chatTopicMatch = text.match(/(?:этот чат про|чат про|мы тут|здесь мы)\s+([\s\S]+)/i);
       if (chatTopicMatch) {
-          const newTopic = chatTopicMatch[1].replace(/[.!?]+$/, '').trim();
-          if (newTopic.length > 3) {
-              storage.setChatTopic(chatId, newTopic);
-              try { return await bot.sendMessage(chatId, `Понял, запомнил. Теперь я знаю, что этот чат про: "${newTopic}"`, getReplyOptions(msg)); } catch(e){}
+          const description = chatTopicMatch[1].trim();
+          if (description.length > 10) {
+              startTyping();
+              const currentProfile = storage.getChatProfile(chatId);
+              const updates = await ai.processManualChatDescription(description, currentProfile);
+              stopTyping();
+
+              if (updates && updates.topic) {
+                  storage.updateChatProfile(chatId, updates);
+                  const factsInfo = updates.facts ? `\n📝 Факты: ${updates.facts.substring(0, 100)}${updates.facts.length > 100 ? '...' : ''}` : '';
+                  try { return await bot.sendMessage(chatId, `Понял, запомнил.\n🎯 Тема: ${updates.topic}${factsInfo}`, getReplyOptions(msg)); } catch(e){}
+              } else {
+                  // Fallback если AI не ответил
+                  storage.setChatTopic(chatId, description.substring(0, 200));
+                  try { return await bot.sendMessage(chatId, `Понял, запомнил. Тема: "${description.substring(0, 100)}..."`, getReplyOptions(msg)); } catch(e){}
+              }
           }
       }
 

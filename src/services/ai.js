@@ -450,6 +450,11 @@ async analyzeChatProfile(messagesBatch, currentProfile) {
     return this.runLogicModel(prompts.analyzeChatProfile(currentProfile, messagesText));
 }
 
+// Обработка ручного описания чата (команда "Сыч, этот чат про...")
+async processManualChatDescription(description, currentProfile) {
+    return this.runLogicModel(prompts.processManualChatDescription(description, currentProfile));
+}
+
 async determineReaction(contextText) {
   const allowed = ["👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷", "🤷‍♀", "😡"];
   const text = await this.runLogicText(prompts.reaction(contextText, allowed.join(" ")));
