@@ -29,14 +29,15 @@ Auto-deployment triggers on push to `main` via GitHub Actions (`.github/workflow
 
 При любых изменениях:
 1. Обновить версию в `package.json` (поле `"version"`)
-2. **При важных изменениях** — обновить `README.md` и `CLAUDE.md` если затронута документируемая функциональность
-3. Закоммитить и запушить в `main`:
+2. **При добавлении новой функции** — обновить `/help` команду в `src/core/logic.js` (helpText)
+3. **При важных изменениях** — обновить `README.md` и `CLAUDE.md` если затронута документируемая функциональность
+4. Закоммитить и запушить в `main`:
    ```bash
    git add .
    git commit -m "описание изменений"
    git push origin main
    ```
-4. GitHub Actions автоматически деплоит на сервер — бот пересобирается для тестирования
+5. GitHub Actions автоматически деплоит на сервер — бот пересобирается для тестирования
 
 ## Architecture
 
