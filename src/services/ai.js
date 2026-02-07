@@ -4,12 +4,12 @@ const prompts = require('../core/prompts');
 const { responses } = require('../core/personality');
 const axios = require('axios');
 const OpenAI = require('openai');
-const { tavily } = require('@tavily/core'); // Р С™Р В»Р С‘Р ВµР Р…РЎвЂљ Tavily
+const { tavily } = require('@tavily/core'); // Клиент Tavily
 const storage = require('./storage');
 
 class AiService {
   constructor() {
-    // 1. Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ OpenAI-РЎРѓР С•Р Р†Р СР ВµРЎРѓРЎвЂљР С‘Р СР С•Р С–Р С• Р С”Р В»Р С‘Р ВµР Р…РЎвЂљР В° (OpenRouter / Mistral / DeepSeek)
+    // 1. Инициализация OpenAI-совместимого клиента (OpenRouter / Mistral / DeepSeek)
     this.openai = config.aiKey ? new OpenAI({
         baseURL: config.aiBaseUrl,
         apiKey: config.aiKey,
@@ -19,7 +19,7 @@ class AiService {
         }
     }) : null;
 
-    // 2. Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ Tavily
+    // 2. Инициализация Tavily
     this.tavilyClient = config.tavilyKey ? tavily({ apiKey: config.tavilyKey }) : null;
 
     // 3. Google Native (Fallback)
@@ -28,7 +28,7 @@ class AiService {
     this.usingFallback = false;
     this.bot = null;
 
-    // === Р РЋР СћР С’Р СћР ВР РЋР СћР ВР С™Р С’ (РЎвЂљР ВµР С—Р ВµРЎР‚РЎРЉ Р С—Р ВµРЎР‚РЎРѓР С‘РЎРѓРЎвЂљР ВµР Р…РЎвЂљР Р…Р В°РЎРЏ РЎвЂЎР ВµРЎР‚Р ВµР В· storage) ===
+    // === СТАТИСТИКА (теперь персистентная через storage) ===
     storage.initGoogleStats(this.keys.length);
 
     if (this.keys.length === 0) console.warn("WARNING: No Gemini keys found in .env. Fallback will not work.");
@@ -45,7 +45,7 @@ class AiService {
     }
   }
 
-  // Р РЋР В±РЎР‚Р С•РЎРѓ РЎРѓРЎвЂљР В°РЎвЂљР С‘РЎРѓРЎвЂљР С‘Р С”Р С‘ Р Р† Р С—Р С•Р В»Р Р…Р С•РЎвЂЎРЎРЉ (Р С—РЎР‚Р С•Р Р†Р ВµРЎР‚Р С”Р В° РЎвЂЎР ВµРЎР‚Р ВµР В· storage)
+  // Сброс статистики в полночь (проверка через storage)
   resetStatsIfNeeded() {
     const wasReset = storage.resetStatsIfNeeded();
     if (wasReset && this.usingFallback) {
@@ -87,7 +87,7 @@ class AiService {
         { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
     ];
 
-    // Р ВРЎРѓР С—Р С•Р В»РЎРЉР В·РЎС“Р ВµР С Fallback Р СР С•Р Т‘Р ВµР В»РЎРЉ Р С‘Р В»Р С‘ РЎРѓРЎвЂљР В°Р Р…Р Т‘Р В°РЎР‚РЎвЂљР Р…РЎС“РЎР‹ Flash (Р С•Р Р…Р В° Р Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В° Р Р† Р Р…Р В°РЎвЂљР С‘Р Р†Р Вµ)
+    // Используем Fallback модель или стандартную Flash (она доступна в нативе)
     const modelName = this.usingFallback ? config.fallbackModelName : config.googleNativeModel;
     console.log(`[AI INIT] Native Key #${this.keyIndex + 1} | Model: ${modelName}`);
 
@@ -95,7 +95,7 @@ class AiService {
         model: modelName,
         systemInstruction: prompts.system(),
         safetySettings: safetySettings,
-        // Р вЂ™Р С”Р В»РЎР‹РЎвЂЎР В°Р ВµР С Р Р…Р В°РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р в„– Р С—Р С•Р С‘РЎРѓР С” Google (Tools)
+        // Включаем нативный поиск Google (Tools)
         tools: [{ googleSearch: {} }] 
     });
   }
@@ -137,18 +137,18 @@ class AiService {
   getCurrentTime() {
     const time = new Date().toLocaleString("ru-RU", {
       timeZone: "Asia/Yekaterinburg",
-      weekday: 'short', // Р РЋР С•Р С”РЎР‚Р В°РЎвЂљР С‘Р С Р Т‘Р С• Р СџРЎвЂљ, Р СџР Р… (РЎРЊР С”Р С•Р Р…Р С•Р СР С‘Р С РЎвЂљР С•Р С”Р ВµР Р…РЎвЂ№)
+      weekday: 'short', // Сократим до Пт, Пн (экономим токены)
       year: 'numeric',
       month: 'numeric',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     });
-    // Р Р‡Р Р†Р Р…Р С• РЎС“Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµР С Р В±Р В°Р В·РЎС“ Р Т‘Р В»РЎРЏ РЎР‚Р В°РЎРѓРЎвЂЎР ВµРЎвЂљР С•Р Р†
+    // Явно указываем базу для расчетов
     return `${time} (UTC+5)`;
   }
 
-// === Р Р€Р СњР ВР вЂ™Р вЂўР В Р РЋР С’Р вЂєР В¬Р СњР В«Р в„ў Р СџР С›Р ВР РЋР С™ ===
+// === УНИВЕРСАЛЬНЫЙ ПОИСК ===
 async performSearch(query) {
   this.resetStatsIfNeeded();
 
@@ -198,12 +198,12 @@ async performSearch(query) {
   return null;
 }
   
-// === Р С›Р РЋР СњР С›Р вЂ™Р СњР С›Р в„ў Р С›Р СћР вЂ™Р вЂўР Сћ ===
+// === ОСНОВНОЙ ОТВЕТ ===
 async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image/jpeg", userInstruction = "", userProfile = null, isSpontaneous = false, chatProfile = null) {
   this.resetStatsIfNeeded();
   console.log(`[DEBUG AI] getResponse called.`);
 
-  // 1. AI Р С›Р СџР В Р вЂўР вЂќР вЂўР вЂєР Р‡Р вЂўР Сћ Р СњР Р€Р вЂ“Р вЂўР Сњ Р вЂєР В Р СџР С›Р ВР РЋР С™
+  // 1. AI ОПРЕДЕЛЯЕТ НУЖЕН ЛИ ПОИСК
   const recentHistory = history.slice(-5).map(m => `${m.role}: ${m.text}`).join('\n');
   const searchDecision = await this.checkSearchNeeded(
       currentMessage.text,
@@ -214,20 +214,20 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   let searchResultText = "";
 
   if (searchDecision.needsSearch && searchDecision.searchQuery) {
-      // 2. Р СџР С›Р ВР РЋР С™ Р В§Р вЂўР В Р вЂўР вЂ” TAVILY / PERPLEXITY
+      // 2. ПОИСК ЧЕРЕЗ TAVILY / PERPLEXITY
       if (config.searchProvider !== 'google') {
           searchResultText = await this.performSearch(searchDecision.searchQuery);
       }
 
-      // 3. FALLBACK Р СњР С’ GOOGLE NATIVE SEARCH
-      // Р вЂўРЎРѓР В»Р С‘ Tavily/Perplexity Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р… Р С‘Р В»Р С‘ Р С—РЎР‚Р С•Р Р†Р В°Р в„–Р Т‘Р ВµРЎР‚ = google
+      // 3. FALLBACK НА GOOGLE NATIVE SEARCH
+      // Если Tavily/Perplexity недоступен или провайдер = google
       if (!searchResultText && this.keys.length > 0) {
           console.log(`[ROUTER] Switching to Google Native Search.`);
           return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
       }
   }
 
-  // 2. Р РЋР вЂР С›Р В Р С™Р С’ Р СџР В Р С›Р СљР СџР СћР С’
+  // 2. СБОРКА ПРОМПТА
   const relevantHistory = history.slice(-20); 
   const contextStr = relevantHistory.map(m => `${m.role}: ${m.text}`).join('\n');
   let personalInfo = "";
@@ -259,7 +259,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
       chatContext: chatProfile
   });
 
-  // 3. Р вЂ”Р С’Р СџР В Р С›Р РЋ Р С™ SMART Р СљР С›Р вЂќР вЂўР вЂєР В (API)
+  // 3. ЗАПРОС К SMART МОДЕЛИ (API)
   if (this.openai) {
       try {
           const messages = [{ role: "system", content: prompts.system() }, { role: "user", content: [] }];
@@ -285,16 +285,16 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
       }
   }
 
-  // 4. FALLBACK (Р вЂўРЎРѓР В»Р С‘ API РЎС“Р С—Р В°Р В» Р С‘Р В»Р С‘ Р С”Р В»РЎР‹РЎвЂЎР В° Р Р…Р ВµРЎвЂљ)
+  // 4. FALLBACK (Если API упал или ключа нет)
   return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
 }
 
-// Helper Р Т‘Р В»РЎРЏ Native Р Р†РЎвЂ№Р В·Р С•Р Р†Р В° (РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р Р…Р Вµ Р Т‘РЎС“Р В±Р В»Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С”Р С•Р Т‘)
+// Helper для Native вызова (чтобы не дублировать код)
 async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile = null) {
     const relevantHistory = history.slice(-20);
     const contextStr = relevantHistory.map(m => `${m.role}: ${m.text}`).join('\n');
 
-    // Р РЋР С•Р В±Р С‘РЎР‚Р В°Р ВµР С Р С—Р С•Р В»Р Р…РЎС“РЎР‹ Р С‘Р Р…РЎвЂћР С•РЎР‚Р СР В°РЎвЂ Р С‘РЎР‹ Р С• Р С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»Р Вµ (Р С”Р В°Р С” Р Р† Р С•РЎРѓР Р…Р С•Р Р†Р Р…Р С•Р С Р СР ВµРЎвЂљР С•Р Т‘Р Вµ)
+    // Собираем полную информацию о пользователе (как в основном методе)
     let personalInfo = "";
     let replyContext = "";
 
@@ -341,11 +341,11 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
     });
 }
 
-// === Р вЂ™Р РЋР СџР С›Р СљР С›Р вЂњР С’Р СћР вЂўР вЂєР В¬Р СњР В«Р вЂў Р СљР вЂўР СћР С›Р вЂќР В« (LOGIC MODEL) ===
+// === ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ (LOGIC MODEL) ===
   
-  // Р Р€Р Р…Р С‘Р Р†Р ВµРЎР‚РЎРѓР В°Р В»РЎРЉР Р…РЎвЂ№Р в„– Р СР ВµРЎвЂљР С•Р Т‘ Р Т‘Р В»РЎРЏ Р В»Р С•Р С–Р С‘Р С”Р С‘
+  // Универсальный метод для логики
   async runLogicModel(promptJson) {
-    // 1. Р СџРЎР‚Р С•Р В±РЎС“Р ВµР С РЎвЂЎР ВµРЎР‚Р ВµР В· API (Logic Model)
+    // 1. Пробуем через API (Logic Model)
     if (this.openai) {
         try {
             const completion = await this.openai.chat.completions.create({
@@ -369,7 +369,7 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
     } catch (e) { return null; }
 }
 
-// Р СџРЎР‚Р С•РЎРѓРЎвЂљР С•Р в„– РЎвЂљР ВµР С”РЎРѓРЎвЂљР С•Р Р†РЎвЂ№Р в„– Р С•РЎвЂљР Р†Р ВµРЎвЂљ (Р Т‘Р В»РЎРЏ РЎР‚Р ВµР В°Р С”РЎвЂ Р С‘Р в„– Р С‘ ShouldAnswer)
+// Простой текстовый ответ (для реакций и ShouldAnswer)
 async runLogicText(promptText) {
     if (this.openai) {
         try {
@@ -388,7 +388,7 @@ async analyzeUserImmediate(lastMessages, currentProfile) {
     return this.runLogicModel(prompts.analyzeImmediate(currentProfile, lastMessages));
 }
 
-// Р С›Р С—РЎР‚Р ВµР Т‘Р ВµР В»Р ВµР Р…Р С‘Р Вµ Р Р…Р ВµР С•Р В±РЎвЂ¦Р С•Р Т‘Р С‘Р СР С•РЎРѓРЎвЂљР С‘ Р С—Р С•Р С‘РЎРѓР С”Р В° (AI-РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ Р Р†Р СР ВµРЎРѓРЎвЂљР С• regex)
+// Определение необходимости поиска (AI-решение вместо regex)
 async checkSearchNeeded(userMessage, recentHistory, chatTopic) {
     const prompt = prompts.shouldSearch(
         this.getCurrentTime(),
@@ -407,7 +407,7 @@ async checkSearchNeeded(userMessage, recentHistory, chatTopic) {
         console.error(`[SEARCH CHECK ERROR] ${e.message}`);
     }
 
-    // Fallback: Р Р…Р Вµ Р С‘РЎРѓР С”Р В°РЎвЂљРЎРЉ Р ВµРЎРѓР В»Р С‘ AI Р Р…Р Вµ Р С•РЎвЂљР Р†Р ВµРЎвЂљР С‘Р В»
+    // Fallback: не искать если AI не ответил
     return { needsSearch: false, searchQuery: null, reason: responses.ai.searchFallbackReason };
 }
 
@@ -417,13 +417,13 @@ async analyzeBatch(messagesBatch, currentProfiles) {
     return this.runLogicModel(prompts.analyzeBatch(knownInfo, chatLog));
 }
 
-// Р С’Р Р…Р В°Р В»Р С‘Р В· Р С—РЎР‚Р С•РЎвЂћР С‘Р В»РЎРЏ РЎвЂЎР В°РЎвЂљР В° (Р С”Р В°Р В¶Р Т‘РЎвЂ№Р Вµ 50 РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р в„–)
+// Анализ профиля чата (каждые 50 сообщений)
 async analyzeChatProfile(messagesBatch, currentProfile) {
     const messagesText = messagesBatch.map(m => `${m.name}: ${m.text}`).join('\n');
     return this.runLogicModel(prompts.analyzeChatProfile(currentProfile, messagesText));
 }
 
-// Р С›Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”Р В° РЎР‚РЎС“РЎвЂЎР Р…Р С•Р С–Р С• Р С•Р С—Р С‘РЎРѓР В°Р Р…Р С‘РЎРЏ РЎвЂЎР В°РЎвЂљР В° (Р С”Р С•Р СР В°Р Р…Р Т‘Р В° "Р РЋРЎвЂ№РЎвЂЎ, РЎРЊРЎвЂљР С•РЎвЂљ РЎвЂЎР В°РЎвЂљ Р С—РЎР‚Р С•...")
+// Обработка ручного описания чата (команда "Сыч, этот чат про...")
 async processManualChatDescription(description, currentProfile) {
     return this.runLogicModel(prompts.processManualChatDescription(description, currentProfile));
 }
@@ -456,9 +456,9 @@ async generateFlavorText(task, result) {
   return `${result}`;
 }
 
-  // === Р СћР В Р С’Р СњР РЋР С™Р В Р ВР вЂР С’Р В¦Р ВР Р‡ ===
+  // === ТРАНСКРИБАЦИЯ ===
   async transcribeAudio(audioBuffer, userName, mimeType) {
-    // Р СћР С•Р В»РЎРЉР С”Р С• Native Р С—Р С•Р Т‘Р Т‘Р ВµРЎР‚Р В¶Р С‘Р Р†Р В°Р ВµРЎвЂљ Р В·Р В°Р С–РЎР‚РЎС“Р В·Р С”РЎС“ РЎвЂћР В°Р в„–Р В»Р С•Р Р† Р С‘Р В· Р В±РЎС“РЎвЂћР ВµРЎР‚Р В° РЎвЂљР В°Р С” Р В»Р ВµР С–Р С”Р С• Р С‘ Р В±Р ВµРЎРѓР С—Р В»Р В°РЎвЂљР Р…Р С•
+    // Только Native поддерживает загрузку файлов из буфера так легко и бесплатно
     if (!this.keys || this.keys.length === 0) {
         console.warn("[AI WARN] Voice received, but there are no Google keys for transcription. Skipping.");
         return null;
@@ -479,7 +479,7 @@ async generateFlavorText(task, result) {
     }
   }
 
-  // === Р СџР С’Р В Р РЋР ВР СњР вЂњ Р СњР С’Р СџР С›Р СљР ВР СњР С’Р СњР ВР Р‡ (Р РЋ Р С™Р С›Р СњР СћР вЂўР С™Р РЋР СћР С›Р Сљ) ===
+  // === ПАРСИНГ НАПОМИНАНИЯ (С КОНТЕКСТОМ) ===
   async parseReminder(userText, contextText = "") {
     const now = this.getCurrentTime();
     const prompt = prompts.parseReminder(now, userText, contextText);
