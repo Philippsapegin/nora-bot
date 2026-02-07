@@ -1,0 +1,9 @@
+services:
+  nora-bot:
+    build: .
+    container_name: nora-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data

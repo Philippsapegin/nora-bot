@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const config = require('./config');
 const logic = require('./core/logic');
+const { responses } = require('./core/personality');
 const storage = require('./services/storage');
 
 
@@ -27,7 +28,7 @@ const bot = new TelegramBot(config.telegramToken, { polling: true });
 const ai = require('./services/ai');
 ai.setBot(bot);
 
-console.log("Сыч запущен и готов пояснять за жизнь.");
+console.log(responses.index.startupLog);
 console.log(`Admin ID: ${config.adminId}`);
 
 // === ТИКЕР НАПОМИНАЛОК (Проверка каждую минуту) ===
@@ -41,7 +42,7 @@ setInterval(() => {
 
       pending.forEach(task => {
           // Формируем сообщение
-          const message = `⏰ ${task.username}, напоминаю!\n\n${task.text}`;
+          const message = responses.index.reminderMessage(task);
           
           // Отправляем
           bot.sendMessage(task.chatId, message).then(() => {
@@ -72,7 +73,7 @@ bot.on('message', async (msg) => {
   if (msg.date < now - 120) return;
 
   const chatId = msg.chat.id;
-  const chatTitle = msg.chat.title || "Личка";
+  const chatTitle = msg.chat.title || responses.index.privateChatTitle;
 
   // === 🛡 SECURITY PROTOCOL: "ВЕРНЫЙ ОРУЖЕНОСЕЦ" ===
   // Проверяем наличие Админа в ЛЮБОМ групповом чате при ЛЮБОМ сообщении
@@ -87,13 +88,7 @@ bot.on('message', async (msg) => {
             console.log(`[SECURITY] ⛔ Обнаружен чат без Админа...`);
             
             // ВОТ ТУТ МЕНЯЕМ СООБЩЕНИЕ
-            const phrases = [
-                "Так, стопэ. Админа не вижу. Благотворительности не будет, я уёбываю!",
-                "Опа, куда это меня занесло? Бати рядом нет, так что я уёбываю!",
-                "Вы че думали, украли бота? Я не работаю в беспризорных приютах. Я уёбываю!",
-                "⚠️ ERROR: ADMIN NOT FOUND. Включаю протокол самоуважения. Я уёбываю!",
-                "Не, ну вы видели? Затащили без спроса. Ну вас нахер, я уёбываю!"
-            ];
+            const phrases = responses.index.securityPhrases;
             const randomPhrase = phrases[Math.floor(Math.random() * phrases.length)];
 
             await bot.sendMessage(chatId, randomPhrase).catch(() => {});
@@ -116,7 +111,7 @@ bot.on('message', async (msg) => {
   // === ЛОГИКА ВЫХОДА ВСЛЕД ЗА АДМИНОМ (ХАТИКО) ===
   if (msg.left_chat_member && msg.left_chat_member.id === config.adminId) {
     console.log(`[SECURITY] Админ вышел из чата "${chatTitle}". Ухожу следом.`);
-    await bot.sendMessage(chatId, "Батя ушел, и я сваливаю.");
+    await bot.sendMessage(chatId, responses.index.adminLeftChat);
     await bot.leaveChat(chatId);
     return;
   }

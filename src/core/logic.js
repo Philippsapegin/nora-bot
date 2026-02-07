@@ -2,6 +2,7 @@ const telegram = require('node-telegram-bot-api');
 const storage = require('../services/storage');
 const ai = require('../services/ai');
 const config = require('../config');
+const { responses } = require('./personality');
 const axios = require('axios');
 const { exec } = require('child_process');
 const chatHistory = {};
@@ -11,59 +12,13 @@ const BUFFER_SIZE = 20;
 const CHAT_BUFFER_SIZE = 50; // Анализируем чат каждые 50 сообщений
 // Храним 10 последних активных юзеров для удобного бана
 const recentActiveUsers = []; 
+const noraTriggerForms = '(?:нора|норы|норе|нору|норой|норою)';
+const noraStatsRegex = new RegExp(`^${noraTriggerForms}\\W+(?:стата|статистика)$`);
+const noraWhoRegex = new RegExp(`^${noraTriggerForms}\\W+кто\\??$`);
 
 // === ГЕНЕРАТОР ОТМАЗОК СЫЧА ===
 function getSychErrorReply(errText) {
-    const error = errText.toLowerCase();
-
-    // 1. ЦЕНЗУРА (Safety / Blocked)
-    if (error.includes('prohibited') || error.includes('safety') || error.includes('blocked') || error.includes('policy')) {
-        const phrases = [
-            "🤬 Гугл опять включил моралиста и зацензурил мой ответ. Сказал, что мы тут слишком токсичные. Сорян.",
-            "🔞 Не, ну это бан. Нейронка отказалась это генерить, говорит \"Violation of Safety Policy\". Слишком грязно даже для меня.",
-            "👮‍♂️ Опа, цензура подъехала. Гугл считает, что этот контент оскорбляет чьи-то нежные чувства. Попробуй помягче спросить."
-        ];
-        return phrases[Math.floor(Math.random() * phrases.length)];
-    }
-
-    // 2. ПЕРЕГРУЗКА (503 / Overloaded)
-    if (error.includes('503') || error.includes('overloaded') || error.includes('unavailable') || error.includes('timeout')) {
-        const phrases = [
-            "🔥 Там у Гугла сервера плавятся. Говорят \"Model is overloaded\". Подожди минуту, пусть остынут.",
-            "🐌 Гугл тупит страшно, 503-я ошибка. Я запрос кинул, а там тишина. Походу, китайцы опять все видеокарты заняли.",
-            "💤 Чёт нейронка устала. Пишет \"Service Unavailable\". Дай ей перекур пару секунд."
-        ];
-        return phrases[Math.floor(Math.random() * phrases.length)];
-    }
-
-    // 3. ЛИМИТЫ (429 / Quota)
-    if (error.includes('429') || error.includes('quota') || error.includes('exhausted') || error.includes('лимит')) {
-        const phrases = [
-            "💸 Всё, пацаны, лимиты всё. Мы слишком много болтаем, Гугл перекрыл краник. Ждем отката квоты.",
-            "🛑 Стопэ. Ошибка 429 — \"Too Many Requests\". Я слишком быстро отвечаю, меня притормозили. Ща отдышусь.",
-            "📉 Квота всё. Гугл сказал «хватит болтать». Попробуй позже."
-        ];
-        return phrases[Math.floor(Math.random() * phrases.length)];
-    }
-
-    // 4. ТЯЖЕЛЫЙ ЗАПРОС (400 / Too Large)
-    if (error.includes('400') || error.includes('too large') || error.includes('invalid argument')) {
-        const phrases = [
-            "🐘 Ты мне библиотеку Конгресса скинул? Гугл говорит, файл слишком жирный, я это не переварю.",
-            "📜 Много буков. Ошибка \"Payload size limit\". Сократи басню, братан, не лезет.",
-            "💾 Файл слишком жирный, не лезет в промпт. Давай что-то полегче."
-        ];
-        return phrases[Math.floor(Math.random() * phrases.length)];
-    }
-
-    // 5. ДЕФОЛТНАЯ ОШИБКА (Зовем Админа)
-    // Если ничего не подошло — значит, упал сам бот или сервер
-    const phrases = [
-        "🛠 Так, у меня шестеренки встали. Какая-то дичь в коде. Админ, просыпайся, тут всё сломалось!",
-        "💥 Я упал. Критическая ошибка. Админ чини давай, я работать не могу.",
-        "🚑 Хьюстон, у нас проблемы. Я поймал баг и не знаю, что делать. Админ, выручай."
-    ];
-    return phrases[Math.floor(Math.random() * phrases.length)];
+  return responses.getErrorReply(errText);
 }
 
 function addToHistory(chatId, sender, text) {
@@ -233,19 +188,19 @@ async function processMessage(bot, msg) {
       // === УВЕДОМЛЕНИЕ О НОВОМ ЧАТЕ ===
   // Если чата нет в базе И это не сам админ пишет себе в личку
   if (!storage.hasChat(chatId) && chatId !== config.adminId) {
-    let alertText = `🔔 **НОВЫЙ КОНТАКТ!**\n\n📂 **Чат:** ${chatTitle}\n🆔 **ID:** \`${chatId}\`\n`;
+    let alertText = responses.adminAlerts.newContactHeader(chatTitle, chatId);
     
-    const inviter = `@${msg.from.username || "нет"} (${msg.from.first_name})`;
+    const inviter = `@${msg.from.username || responses.adminAlerts.noUsername} (${msg.from.first_name})`;
 
     if (msg.chat.type === 'private') {
-        alertText += `👤 **Написал:** ${inviter}\n💬 **Текст:** ${text}`;
+        alertText += responses.adminAlerts.privateMessage(inviter, text);
     } else {
         // Если добавили в группу
         if (msg.new_chat_members && msg.new_chat_members.some(u => u.id === config.botId)) {
-           alertText += `👋 **Меня добавил:** ${inviter}\n👥 **Тип:** Группа/Канал`;
+           alertText += responses.adminAlerts.groupAdded(inviter);
         } else {
            // Просто первое сообщение из новой группы, где я уже был (или админ чистил базу)
-           alertText += `👤 **Активация:** ${inviter}\n💬 **Сообщение:** ${text}`;
+           alertText += responses.adminAlerts.groupActivated(inviter, text);
         }
     }
     
@@ -259,35 +214,20 @@ async function processMessage(bot, msg) {
         // === ЛИЧКА: ПЕРЕСЫЛКА АДМИНУ И ОТВОРОТ-ПОВОРОТ ===
     if (msg.chat.type === 'private' && userId !== config.adminId) {
         // 1. Стучим админу о КАЖДОМ сообщении
-        const senderInfo = `@${msg.from.username || "нет"} (${msg.from.first_name})`;
+        const senderInfo = `@${msg.from.username || responses.adminAlerts.noUsername} (${msg.from.first_name})`;
         
         // Формируем отчет: текст или пометка о файле
-        let contentReport = text ? `💬 ${text}` : "📎 [Прислал файл или стикер]";
+        let contentReport = text ? responses.adminAlerts.privateForwardText(text) : responses.privateMode.filePlaceholder;
         
         // Шлем тебе
-        bot.sendMessage(config.adminId, `📩 ЛС от ${senderInfo}:\n${contentReport}`).catch(e => console.error("Ошибка пересылки ЛС:", e.message));
+        bot.sendMessage(config.adminId, responses.adminAlerts.privateForward(senderInfo, contentReport)).catch(e => console.error(responses.adminAlerts.privateForwardErrorLog, e.message));
 
         // 2. Если это не команда /start — отшиваем вежливо, но с инфой
         if (command !== '/start') {
             bot.sendChatAction(chatId, 'typing', getActionOptions(threadId)).catch(() => {});
             await new Promise(r => setTimeout(r, 1500)); // Пауза для реализма
 
-            const infoText = `В личке я общаюсь только с Админом.**
-
-**Почему так?**
-Бот работает на моих API-ключах Google, и я отвечаю за всё, что он генерирует. Поэтому он работает только там, где есть я (в чатах) или в моей личке.
-
-**Где меня потестить?**
-Залетай в комментарии к [этому посту](https://t.me/VETA14/13) или любому другому в канале, там я отвечаю всем.
-*(Просто напиши там «Сыч» или ответь реплаем на любое мое сообщение)*
-
-**Хочешь себе такого же бота?**
-Весь мой код открыт! Ты можешь скачать меня, вставить свои ключи и запустить на своем компе или сервере.
-[Скачать с GitHub](https://github.com/Veta-one/sych-bot)
-
-**Инструкция по установке**
-Подробный гайд (займет 10 минут) лежит вот тут:
-[Читать инструкцию](https://t.me/VETA14/13)`;
+            const infoText = responses.privateMode.infoText;
 
             // Отправляем с Markdown.
             // disable_web_page_preview: true — чтобы не забивать чат картинками ссылок
@@ -299,7 +239,7 @@ async function processMessage(bot, msg) {
 
   
   if (msg.left_chat_member && msg.left_chat_member.id === config.adminId) {
-    await bot.sendMessage(chatId, "Батя ушел, и я сваливаю.");
+    await bot.sendMessage(chatId, responses.privateMode.adminLeftShort);
     await bot.leaveChat(chatId);
     return;
   }
@@ -315,7 +255,7 @@ async function processMessage(bot, msg) {
         const link = await bot.getFileLink(fileId);
         const resp = await axios.get(link, { responseType: 'arraybuffer' });
         const buffer = Buffer.from(resp.data);
-        const userName = msg.from.first_name || "Анон";
+        const userName = msg.from.first_name || responses.voice.unknownUserName;
 
         const transcription = await ai.transcribeAudio(buffer, userName, mimeType);
         
@@ -334,14 +274,14 @@ async function processMessage(bot, msg) {
             const isTldrUseful = tldrLen < (fullLen * 0.65);
 
             if (isTldrUseful) {
-                replyText = `• <b>Краткая суть:</b>\n${escapeHtml(transcription.summary)}\n\n• <b>Полный текст:</b>\n<blockquote expandable>${escapeHtml(transcription.text)}</blockquote>`;
+                replyText = responses.voice.tldrReply(transcription.summary, transcription.text);
             } else {
                 // Если TLDR бесполезен, просто пишем кто сказал
-                replyText = `<b>${escapeHtml(userName)} сказал:</b>\n<blockquote expandable>${escapeHtml(transcription.text)}</blockquote>`;
+                replyText = responses.voice.fullReply(userName, transcription.text);
             }
 
             // Останавливаем "печатает"
-            try { await bot.sendMessage(chatId, replyText, { reply_to_message_id: msg.message_id, parse_mode: 'HTML' }); } catch(e) {}
+            try { await bot.sendMessage(chatId, replyText, getReplyOptions(msg)); } catch(e) {}
             
             // !!! ВАЖНО: Если чат в муте — на этом всё. Не отвечаем на содержимое.
             if (storage.isTopicMuted(chatId, threadId)) return;
@@ -368,7 +308,7 @@ async function processMessage(bot, msg) {
   if (!analysisBuffers[chatId]) analysisBuffers[chatId] = [];
   
   // Собираем полную инфу о юзере для лога
-  const senderName = msg.from.first_name || "User";
+  const senderName = msg.from.first_name || responses.identity.fallbackSenderName;
   const senderUsername = msg.from.username ? `@${msg.from.username}` : "";
   const displayName = senderUsername ? `${senderName} (${senderUsername})` : senderName;
 
@@ -392,7 +332,7 @@ async function processMessage(bot, msg) {
 
   // === КОМАНДЫ ===
   if (command === '/version') {
-    return bot.sendMessage(chatId, `🦉 **Sych Bot**\nВерсия: \`v${config.version}\``, getBaseOptions(threadId));
+    return bot.sendMessage(chatId, responses.commands.version(config.version), getBaseOptions(threadId));
 }
 
   // === АДМИН-ПАНЕЛЬ (БАНЫ) ===
@@ -402,16 +342,16 @@ async function processMessage(bot, msg) {
     if (command === '/banlist') {
         const banned = storage.getBannedList();
         const list = Object.entries(banned).map(([uid, name]) => `⛔ \`${uid}\` — ${name}`).join('\n');
-        return bot.sendMessage(chatId, list.length ? `**Черный список:**\n${list}` : "Список пуст.", getBaseOptions(threadId));
+        return bot.sendMessage(chatId, responses.commands.banList(list), getBaseOptions(threadId));
     }
 
     // 2. РАЗБАН
     if (command === '/unban') {
         const targetId = text.split(' ')[1];
-        if (!targetId) return bot.sendMessage(chatId, "⚠️ Введи ID: `/unban 123456`", getBaseOptions(threadId));
-        
+        if (!targetId) return bot.sendMessage(chatId, responses.commands.unbanPrompt, getBaseOptions(threadId));
+
         storage.unbanUser(targetId);
-        return bot.sendMessage(chatId, `✅ Юзер \`${targetId}\` разбанен.`, getBaseOptions(threadId));
+        return bot.sendMessage(chatId, responses.commands.unbanSuccess(targetId), getBaseOptions(threadId));
     }
 
     // 3. БАН (С интерфейсом)
@@ -421,13 +361,13 @@ async function processMessage(bot, msg) {
 
         // Вариант А: Просто /ban (показываем последних активных)
         if (!target) {
-            if (recentActiveUsers.length === 0) return bot.sendMessage(chatId, "Список активности пуст.", getBaseOptions(threadId));
+            if (recentActiveUsers.length === 0) return bot.sendMessage(chatId, responses.commands.emptyActivity, getBaseOptions(threadId));
             
             const list = recentActiveUsers.map((u, i) => {
                 return `${i+1}. **${u.name}**\n🆔 \`${u.id}\`\n💬 "${u.text}..."\n📂 ${u.chat}`;
             }).join('\n\n');
             
-            return bot.sendMessage(chatId, `**Последние активные:**\n\n${list}\n\nЧтобы забанить: \`/ban ID\``, getBaseOptions(threadId));
+            return bot.sendMessage(chatId, responses.commands.lastActive(list), getBaseOptions(threadId));
         }
 
         // Вариант Б: /ban @username или /ban 123456
@@ -437,64 +377,36 @@ async function processMessage(bot, msg) {
         // Если ввели username (начинается с @ или буквы)
         if (isNaN(target)) {
            const foundId = storage.findUserIdByUsername(target);
-           if (!foundId) return bot.sendMessage(chatId, `❌ Не нашел юзера с ником ${target} в своей базе. Нужен точный ID.`, getBaseOptions(threadId));
+           if (!foundId) return bot.sendMessage(chatId, responses.commands.userNotFound(target), getBaseOptions(threadId));
            targetId = foundId;
         }
 
-        if (parseInt(targetId) === config.adminId) return bot.sendMessage(chatId, "🤡 Себя банить плохая примета.", getBaseOptions(threadId));
+        if (parseInt(targetId) === config.adminId) return bot.sendMessage(chatId, responses.commands.selfBan, getBaseOptions(threadId));
 
         storage.banUser(targetId, targetName);
-        return bot.sendMessage(chatId, `🚫 **BANNED**\nПользователь: ${targetName}\nID: \`${targetId}\`\n\nТеперь я буду его игнорить везде.`, getBaseOptions(threadId));
+        return bot.sendMessage(chatId, responses.commands.banSuccess(targetName, targetId), getBaseOptions(threadId));
     }
 }
 
   if (command === '/help' || command === '/start') {
-    const helpText = `
-*Вот тебе гайд*
-
-**🦉 Вижу и Слышу:**
-• Кидай войс — расшифрую текст и напишу краткую суть.
-• Кидай фото или видео — пойму, что там, и прокомментирую.
-• Кидай PDF, TXT или код — прочитаю и отвечу на вопросы.
-• Кидай ссылку на картинку (.jpg, .png, .webp) — скачаю и посмотрю.
-• Умею гуглить актуальную инфу (курсы, новости, погода).
-• «Сыч напомни завтра в 10» — поставлю напоминание. Можно реплаем на сообщение с датой.
-
-**🎲 Развлекуха:**
-• "Сыч кинь монетку" — Орёл/Решка.
-• "Сыч число 1-100" — Рандомное число в диапазоне.
-• "Сыч кто из нас [вопрос]" — Выберу случайного из чата.
-
-**🕵️ Досье и Память:**
-• "Сыч кто я?" — Моё честное мнение о тебе.
-• "Сыч расскажи про @юзера" — Выдам досье на участника.
-• "Сыч стата" — Статистика токенов за сутки.
-• "Сыч, этот чат про [тема]" — Задать тему чата вручную.
-
-**⚙️ Настройки:**
-• /mute — Режим тишины (перестану отвечать в этом чате).
-• /reset — Сброс памяти (если начал тупить или забыл контекст).
-• /version — Узнать текущую версию бота.
-
-_ver: ${config.version}_
-        `;
+    const helpText = responses.commands.helpText;
     try { return await bot.sendMessage(chatId, helpText, getBaseOptions(threadId)); } catch (e) {}
 }
 
   if (command === '/mute') {
     const nowMuted = storage.toggleMute(chatId, threadId);
-    return bot.sendMessage(chatId, nowMuted ? "🦉 Окей молчу" : "🦉 Я тут", getBaseOptions(threadId));
+    return bot.sendMessage(chatId, nowMuted ? responses.commands.muteOn : responses.commands.muteOff, getBaseOptions(threadId));
   }
   if (command === '/reset') {
     chatHistory[chatId] = [];
     analysisBuffers[chatId] = [];
-    return bot.sendMessage(chatId, "🦉 Окей, всё забыл, ну было и было", getBaseOptions(threadId));
+    return bot.sendMessage(chatId, responses.commands.resetDone, getBaseOptions(threadId));
   }
 
   if (command === '/restart' && userId === config.adminId) {
-    await bot.sendMessage(chatId, "🔄 Перезагружаюсь...", getBaseOptions(threadId));
-    exec('pm2 restart sych-bot', (err) => {
-        if (err) bot.sendMessage(config.adminId, `❌ Ошибка рестарта: ${err.message}`);
+    await bot.sendMessage(chatId, responses.commands.restarting, getBaseOptions(threadId));
+    exec('pm2 restart nora-bot || pm2 restart sych-bot', (err) => {
+        if (err) bot.sendMessage(config.adminId, responses.commands.restartError(err.message));
     });
     return;
   }
@@ -514,7 +426,7 @@ _ver: ${config.version}_
   addToHistory(chatId, senderName, text);
 
   // === СТАТИСТИКА ===
-  if (cleanText === 'сыч стата' || cleanText === 'сыч статистика') {
+  if (noraStatsRegex.test(cleanText.trim())) {
     const report = ai.getStatsReport();
     return bot.sendMessage(chatId, report, getReplyOptions(msg));
   }
@@ -548,7 +460,7 @@ _ver: ${config.version}_
 
   // === ФИЧИ ===
   if (hasTriggerWord) {
-      // Команда "Сыч, этот чат про..." — используем оригинальный текст (не lowercase)
+      // Команда "Нора, этот чат про..." — используем оригинальный текст (не lowercase)
       const chatTopicMatch = text.match(/(?:этот чат про|чат про|мы тут|здесь мы)\s+([\s\S]+)/i);
       if (chatTopicMatch) {
           const description = chatTopicMatch[1].trim();
@@ -560,12 +472,12 @@ _ver: ${config.version}_
 
               if (updates && updates.topic) {
                   storage.updateChatProfile(chatId, updates);
-                  const factsInfo = updates.facts ? `\n📝 Факты: ${updates.facts.substring(0, 100)}${updates.facts.length > 100 ? '...' : ''}` : '';
-                  try { return await bot.sendMessage(chatId, `Понял, запомнил.\n🎯 Тема: ${updates.topic}${factsInfo}`, getReplyOptions(msg)); } catch(e){}
+                  const factsInfo = updates.facts ? responses.features.chatFactsInfo(updates.facts) : '';
+                  try { return await bot.sendMessage(chatId, responses.features.chatTopicSaved(updates.topic, factsInfo), getReplyOptions(msg)); } catch(e){}
               } else {
                   // Fallback если AI не ответил
                   storage.setChatTopic(chatId, description.substring(0, 200));
-                  try { return await bot.sendMessage(chatId, `Понял, запомнил. Тема: "${description.substring(0, 100)}..."`, getReplyOptions(msg)); } catch(e){}
+                  try { return await bot.sendMessage(chatId, responses.features.chatTopicSavedFallback(description), getReplyOptions(msg)); } catch(e){}
               }
           }
       }
@@ -584,8 +496,8 @@ _ver: ${config.version}_
       
       if (cleanText.match(/(монетк|кинь|брось|подбрось|подкинь)/)) {
           try { await bot.sendChatAction(chatId, 'typing', getActionOptions(threadId)); } catch(e){}
-          const result = Math.random() > 0.5 ? "ОРЁЛ" : "РЕШКА";
-          const flavor = await ai.generateFlavorText("подбросить монетку", result);
+          const result = responses.features.coinFlipResult(Math.random() > 0.5);
+          const flavor = await ai.generateFlavorText(responses.features.coinFlipTask, result);
           try { return await bot.sendMessage(chatId, flavor, getReplyOptions(msg)); } catch(e){}
       }
 
@@ -595,22 +507,22 @@ _ver: ${config.version}_
           const min = parseInt(rangeMatch[1]);
           const max = parseInt(rangeMatch[2]);
           const rand = Math.floor(Math.random() * (max - min + 1)) + min;
-          const flavor = await ai.generateFlavorText(`выбрать число ${min}-${max}`, String(rand));
+          const flavor = await ai.generateFlavorText(responses.features.numberPickTask(min, max), String(rand));
           try { return await bot.sendMessage(chatId, flavor, getReplyOptions(msg)); } catch(e){}
       }
       
-      const isWhoGame = cleanText.match(/(?:кто|кого)\s+(?:из нас|тут|здесь|в чате|сегодня)/) || cleanText.match(/сыч\W+кто\??$/) || cleanText.trim() === "сыч кто";
+      const isWhoGame = cleanText.match(/(?:кто|кого)\s+(?:из нас|тут|здесь|в чате|сегодня)/) || noraWhoRegex.test(cleanText.trim());
       if (isWhoGame) {
           try { await bot.sendChatAction(chatId, 'typing', getActionOptions(threadId)); } catch(e){}
           const randomUser = storage.getRandomUser(chatId);
-          if (!randomUser) return bot.sendMessage(chatId, "Никого не знаю пока.", getBaseOptions(threadId));
-          const flavor = await ai.generateFlavorText(`выбрать случайного человека из чата на вопрос "${text}"`, randomUser);
+          if (!randomUser) return bot.sendMessage(chatId, responses.features.noKnownUsersYet, getBaseOptions(threadId));
+          const flavor = await ai.generateFlavorText(responses.features.whoGameTask(text), randomUser);
           try { return await bot.sendMessage(chatId, flavor, getReplyOptions(msg)); } catch(e){}
       }
   }
 
   // === РЕШЕНИЕ ОБ ОТВЕТЕ ===
-  // Бот отвечает ТОЛЬКО когда его явно вызвали (тег "сыч/sych") или ответили на его сообщение
+  // Бот отвечает ТОЛЬКО когда его явно вызвали по имени (любой формой "Нора") или ответили на его сообщение
   const shouldAnswer = isDirectlyCalled;
 
   // === ЛОГИКА РЕАКЦИЙ (15%) ===
@@ -620,7 +532,7 @@ _ver: ${config.version}_
     const historyBlock = chatHistory[chatId].slice(-15).map(m => `${m.role}: ${m.text}`).join('\n');
     
     // Передаем истории вместе с текущим текстом
-    ai.determineReaction(historyBlock + `\nСообщение для реакции: ${text}`).then(async (emoji) => {
+    ai.determineReaction(historyBlock + responses.features.reactionContext(text)).then(async (emoji) => {
         if (emoji) {
             try { await bot.setMessageReaction(chatId, msg.message_id, { reaction: [{ type: 'emoji', emoji: emoji }] }); } catch (e) {}
         }
@@ -639,7 +551,7 @@ _ver: ${config.version}_
     // 1. СТИКЕР
     if (msg.sticker) {
         const stickerEmoji = msg.sticker.emoji || "";
-        if (stickerEmoji) text += ` [Отправлен стикер: ${stickerEmoji}]`;
+        if (stickerEmoji) text += responses.features.stickerContext(stickerEmoji);
 
         if (!msg.sticker.is_animated && !msg.sticker.is_video) {
             try {
@@ -668,7 +580,7 @@ _ver: ${config.version}_
         const vid = msg.video || msg.reply_to_message.video;
         // Лимит 20 МБ (Telegram API limit for getFile)
         if (vid.file_size > 20 * 1024 * 1024) {
-            return bot.sendMessage(chatId, "🐢 Братан, видос жирный пиздец (больше 20мб). Я не грузчик, таскать такое. Сожми или обрежь.", getReplyOptions(msg));
+            return bot.sendMessage(chatId, responses.features.videoTooLarge, getReplyOptions(msg));
         }
         try {
             await bot.sendChatAction(chatId, 'upload_video', getActionOptions(threadId));
@@ -692,12 +604,12 @@ _ver: ${config.version}_
         ];
 
         if (doc.file_size > 20 * 1024 * 1024) {
-            return bot.sendMessage(chatId, "🐘 Не, файл тяжелый (больше 20мб). Я пас.", getReplyOptions(msg));
+            return bot.sendMessage(chatId, responses.features.documentTooLarge, getReplyOptions(msg));
         }
 
         if (!allowedMimes.includes(doc.mime_type) && !doc.mime_type.startsWith('image/')) {
-             // Если формат странный, но юзер прямо просит - можно попробовать рискнуть, но лучше предупредить
-             return bot.sendMessage(chatId, "🗿 Эт че за формат? Я такое не читаю. Давай PDF или текст.", getReplyOptions(msg));
+             // ???? ?????? ????????, ?? ???? ????? ?????? - ????? ??????????? ????????, ?? ????? ????????????
+             return bot.sendMessage(chatId, responses.features.unsupportedDocumentType, getReplyOptions(msg));
         }
 
         try {
@@ -784,7 +696,7 @@ _ver: ${config.version}_
     
     if (!aiResponse) {
         console.log(`[DEBUG] 🚨 ОШИБКА: AI вернул пустоту!`);
-        bot.sendMessage(config.adminId, `⚠️ **ALARM:** Gemini вернула пустую строку!\n📂 **Чат:** ${chatTitle}`, { parse_mode: 'Markdown' }).catch(() => {});
+        bot.sendMessage(config.adminId, responses.adminAlerts.geminiEmptyAlarm(chatTitle), { parse_mode: "Markdown" }).catch(() => {});
         aiResponse = getSychErrorReply("503 overloaded");
 
     }
@@ -793,7 +705,7 @@ _ver: ${config.version}_
         console.error("[CRITICAL AI ERROR]:", err.message);
         
         // 1. ШЛЕМ ТЕХНИЧЕСКИЙ РЕПОРТ АДМИНУ (В личку)
-        const errorMsg = `🔥 **Gemini упала!**\n\nЧат: ${chatTitle}\nОшибка: \`${err.message}\``;
+        const errorMsg = responses.adminAlerts.geminiCrash(chatTitle, err.message);
         bot.sendMessage(config.adminId, errorMsg, { parse_mode: 'Markdown' }).catch(() => {});
 
         // 2. ГЕНЕРИРУЕМ СМЕШНОЙ ОТВЕТ ДЛЯ ЧАТА
@@ -836,7 +748,7 @@ _ver: ${config.version}_
 
         // Защита от спама (обрезаем, если больше 8500)
         if (formattedResponse.length > 8500) {
-            formattedResponse = formattedResponse.substring(0, 8500) + "\n\n...[обсуждение слишком длинное, я устал]...";
+            formattedResponse = formattedResponse.substring(0, 8500) + responses.features.longResponseSuffix;
         }
 
         // Разбиваем на куски по 4000 символов
@@ -855,14 +767,14 @@ _ver: ${config.version}_
 
         stopTyping(); // <-- Всё, сообщение ушло, выключаем статус
         
-        addToHistory(chatId, "Сыч", aiResponse);
+        addToHistory(chatId, responses.identity.botName, aiResponse);
 
     } catch (error) {
         stopTyping(); // <-- Если ошибка, ОБЯЗАТЕЛЬНО выключаем
         console.error(`[SEND ERROR]: ${error.message}`);
 
         // Отчет админу
-        bot.sendMessage(config.adminId, `⚠️ **Ошибка отправки:** ${error.message}\n📂 **Чат:** ${chatTitle}\n🆔 **ID:** ${chatId}`, { parse_mode: 'Markdown' }).catch(() => {});
+        bot.sendMessage(config.adminId, responses.adminAlerts.sendError(error.message, chatTitle, chatId), { parse_mode: "Markdown" }).catch(() => {});
 
         // АВАРИЙНАЯ ОТПРАВКА (Если Markdown сломался или что-то еще)
         // Шлем чистый текст без всякого форматирования
@@ -871,7 +783,7 @@ _ver: ${config.version}_
              for (const chunk of rawChunks) {
                 await bot.sendMessage(chatId, chunk, { reply_to_message_id: msg.message_id });
              }
-             addToHistory(chatId, "Сыч", aiResponse);
+             addToHistory(chatId, responses.identity.botName, aiResponse);
         } catch (e2) { console.error("FATAL SEND ERROR (Даже аварийная не ушла):", e2.message); }
     }
 

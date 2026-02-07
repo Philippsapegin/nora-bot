@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log*
+yarn-error.log*
+.git
+.github
+.env
+data
+sych-bot-1.0.1
+README.md
+CLAUDE.md

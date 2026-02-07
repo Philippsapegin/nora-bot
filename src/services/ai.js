@@ -1,24 +1,25 @@
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const config = require('../config');
 const prompts = require('../core/prompts');
+const { responses } = require('../core/personality');
 const axios = require('axios');
 const OpenAI = require('openai');
-const { tavily } = require('@tavily/core'); // Клиент Tavily
+const { tavily } = require('@tavily/core'); // Р С™Р В»Р С‘Р ВµР Р…РЎвЂљ Tavily
 const storage = require('./storage');
 
 class AiService {
   constructor() {
-    // 1. Инициализация OpenAI-совместимого клиента (OpenRouter / Mistral / DeepSeek)
+    // 1. Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ OpenAI-РЎРѓР С•Р Р†Р СР ВµРЎРѓРЎвЂљР С‘Р СР С•Р С–Р С• Р С”Р В»Р С‘Р ВµР Р…РЎвЂљР В° (OpenRouter / Mistral / DeepSeek)
     this.openai = config.aiKey ? new OpenAI({
         baseURL: config.aiBaseUrl,
         apiKey: config.aiKey,
         defaultHeaders: {
           "HTTP-Referer": "https://github.com/Veta-one/sych-bot",
-          "X-Title": "Sych Bot"
+          "X-Title": responses.identity.botTitle
         }
     }) : null;
 
-    // 2. Инициализация Tavily
+    // 2. Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ Tavily
     this.tavilyClient = config.tavilyKey ? tavily({ apiKey: config.tavilyKey }) : null;
 
     // 3. Google Native (Fallback)
@@ -27,10 +28,10 @@ class AiService {
     this.usingFallback = false;
     this.bot = null;
 
-    // === СТАТИСТИКА (теперь персистентная через storage) ===
+    // === Р РЋР СћР С’Р СћР ВР РЋР СћР ВР С™Р С’ (РЎвЂљР ВµР С—Р ВµРЎР‚РЎРЉ Р С—Р ВµРЎР‚РЎРѓР С‘РЎРѓРЎвЂљР ВµР Р…РЎвЂљР Р…Р В°РЎРЏ РЎвЂЎР ВµРЎР‚Р ВµР В· storage) ===
     storage.initGoogleStats(this.keys.length);
 
-    if (this.keys.length === 0) console.warn("WARNING: Нет ключей Gemini в .env! Fallback не сработает.");
+    if (this.keys.length === 0) console.warn("WARNING: No Gemini keys found in .env. Fallback will not work.");
     this.initNativeModel();
   }
 
@@ -44,51 +45,28 @@ class AiService {
     }
   }
 
-  // Сброс статистики в полночь (проверка через storage)
+  // Р РЋР В±РЎР‚Р С•РЎРѓ РЎРѓРЎвЂљР В°РЎвЂљР С‘РЎРѓРЎвЂљР С‘Р С”Р С‘ Р Р† Р С—Р С•Р В»Р Р…Р С•РЎвЂЎРЎРЉ (Р С—РЎР‚Р С•Р Р†Р ВµРЎР‚Р С”Р В° РЎвЂЎР ВµРЎР‚Р ВµР В· storage)
   resetStatsIfNeeded() {
     const wasReset = storage.resetStatsIfNeeded();
     if (wasReset && this.usingFallback) {
       this.usingFallback = false;
       this.keyIndex = 0;
       this.initNativeModel();
-      this.notifyAdmin("🌙 **Новый день!**\nЛимиты сброшены. Возврат в основной режим.");
+      this.notifyAdmin(responses.ai.newDayResetNotice);
     }
   }
 
   getStatsReport() {
     this.resetStatsIfNeeded();
     const { today, week, month, allTime } = storage.getFullStats();
-    const mode = this.usingFallback ? "⚠️ FALLBACK" : "⚡️ API";
-
-    // Форматирование даты (31.01)
-    const dateStr = today.date ? today.date.split('-').reverse().slice(0, 2).join('.') : '--';
-
-    // Сегодня — подробно
-    const googleRows = (today.google || []).map((s, i) =>
-      `${i + 1}: ${s.status ? "🟢" : "🔴"} ${s.count}`
-    ).join('\n');
-
-    const todaySection = [
-      `Сегодня ${dateStr}:`,
-      `Режим: ${mode}`,
-      ``,
-      `• API`,
-      `Smart: ${today.smart}`,
-      `Logic: ${today.logic}`,
-      `Search: ${today.search}`,
-      ``,
-      `• Google Native:`,
-      googleRows
-    ].join('\n');
-
-    // Неделя, месяц, всё время — кратко
-    const weekSection = `Неделя: API ${week.smart + week.logic} | Google ${week.google} | Поиск ${week.search}`;
-    const monthSection = `Месяц: API ${month.smart + month.logic} | Google ${month.google} | Поиск ${month.search}`;
-
-    const allTimeTotal = allTime.smart + allTime.logic + allTime.google;
-    const allTimeSection = `Всего: ${this._formatNumber(allTimeTotal)} запросов`;
-
-    return `${todaySection}\n\n${weekSection}\n${monthSection}\n${allTimeSection}`;
+    return responses.ai.formatStatsReport({
+      today,
+      week,
+      month,
+      allTime,
+      usingFallback: this.usingFallback,
+      formatNumber: (value) => this._formatNumber(value),
+    });
   }
 
   _formatNumber(num) {
@@ -109,7 +87,7 @@ class AiService {
         { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
     ];
 
-    // Используем Fallback модель или стандартную Flash (она доступна в нативе)
+    // Р ВРЎРѓР С—Р С•Р В»РЎРЉР В·РЎС“Р ВµР С Fallback Р СР С•Р Т‘Р ВµР В»РЎРЉ Р С‘Р В»Р С‘ РЎРѓРЎвЂљР В°Р Р…Р Т‘Р В°РЎР‚РЎвЂљР Р…РЎС“РЎР‹ Flash (Р С•Р Р…Р В° Р Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В° Р Р† Р Р…Р В°РЎвЂљР С‘Р Р†Р Вµ)
     const modelName = this.usingFallback ? config.fallbackModelName : config.googleNativeModel;
     console.log(`[AI INIT] Native Key #${this.keyIndex + 1} | Model: ${modelName}`);
 
@@ -117,7 +95,7 @@ class AiService {
         model: modelName,
         systemInstruction: prompts.system(),
         safetySettings: safetySettings,
-        // Включаем нативный поиск Google (Tools)
+        // Р вЂ™Р С”Р В»РЎР‹РЎвЂЎР В°Р ВµР С Р Р…Р В°РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р в„– Р С—Р С•Р С‘РЎРѓР С” Google (Tools)
         tools: [{ googleSearch: {} }] 
     });
   }
@@ -125,13 +103,13 @@ class AiService {
   rotateNativeKey() {
     storage.markGoogleKeyExhausted(this.keyIndex);
 
-    console.log(`[AI WARNING] Native Key #${this.keyIndex + 1} исчерпан.`);
+    console.log(`[AI WARNING] Native key #${this.keyIndex + 1} exhausted.`);
     this.keyIndex++;
 
     if (this.keyIndex >= this.keys.length) {
         this.keyIndex = 0;
-        console.error("☠️ Все нативные ключи исчерпаны.");
-        this.notifyAdmin("⚠️ **Внимание!** Все Google ключи исчерпаны.");
+        console.error("All native Google keys are exhausted.");
+        this.notifyAdmin(responses.ai.allGoogleKeysExhausted);
     }
     this.initNativeModel();
   }
@@ -153,31 +131,31 @@ class AiService {
             }
         }
     }
-    throw new Error("Все ключи Google Native исчерпаны!");
+    throw new Error("All Google Native keys are exhausted.");
   }
 
   getCurrentTime() {
     const time = new Date().toLocaleString("ru-RU", {
       timeZone: "Asia/Yekaterinburg",
-      weekday: 'short', // Сократим до Пт, Пн (экономим токены)
+      weekday: 'short', // Р РЋР С•Р С”РЎР‚Р В°РЎвЂљР С‘Р С Р Т‘Р С• Р СџРЎвЂљ, Р СџР Р… (РЎРЊР С”Р С•Р Р…Р С•Р СР С‘Р С РЎвЂљР С•Р С”Р ВµР Р…РЎвЂ№)
       year: 'numeric',
       month: 'numeric',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     });
-    // Явно указываем базу для расчетов
+    // Р Р‡Р Р†Р Р…Р С• РЎС“Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµР С Р В±Р В°Р В·РЎС“ Р Т‘Р В»РЎРЏ РЎР‚Р В°РЎРѓРЎвЂЎР ВµРЎвЂљР С•Р Р†
     return `${time} (UTC+5)`;
   }
 
-// === УНИВЕРСАЛЬНЫЙ ПОИСК ===
+// === Р Р€Р СњР ВР вЂ™Р вЂўР В Р РЋР С’Р вЂєР В¬Р СњР В«Р в„ў Р СџР С›Р ВР РЋР С™ ===
 async performSearch(query) {
   this.resetStatsIfNeeded();
 
   // 1. TAVILY
   if (config.searchProvider === 'tavily' && this.tavilyClient) {
       try {
-          console.log(`[SEARCH] Tavily ищет: ${query}`);
+          console.log(`[SEARCH] Tavily query: ${query}`);
           const response = await this.tavilyClient.search(query, {
               search_depth: "advanced",
               max_results: 3,
@@ -186,7 +164,7 @@ async performSearch(query) {
           storage.incrementStat('search');
           
           let resultText = "";
-          if (response.answer) resultText += `Краткий ответ Tavily: ${response.answer}\n\n`;
+          if (response.answer) resultText += `${responses.ai.tavilyAnswerPrefix}${response.answer}\n\n`;
           response.results.forEach((res, i) => {
               resultText += `[${i+1}] ${res.title} (${res.url}):\n${res.content}\n\n`;
           });
@@ -200,11 +178,11 @@ async performSearch(query) {
   // 2. PERPLEXITY
   if (config.searchProvider === 'perplexity' && this.openai) {
       try {
-          console.log(`[SEARCH] Perplexity ищет: ${query}`);
+          console.log(`[SEARCH] Perplexity query: ${query}`);
           const completion = await this.openai.chat.completions.create({
               model: config.perplexityModel,
               messages: [
-                  { role: "system", content: `Date: ${this.getCurrentTime()}. Search engine mode. Provide facts with URLs.` },
+                  { role: "system", content: responses.ai.perplexitySearchSystemPrompt(this.getCurrentTime()) },
                   { role: "user", content: query }
               ],
               temperature: 0.1
@@ -220,12 +198,12 @@ async performSearch(query) {
   return null;
 }
   
-// === ОСНОВНОЙ ОТВЕТ ===
+// === Р С›Р РЋР СњР С›Р вЂ™Р СњР С›Р в„ў Р С›Р СћР вЂ™Р вЂўР Сћ ===
 async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image/jpeg", userInstruction = "", userProfile = null, isSpontaneous = false, chatProfile = null) {
   this.resetStatsIfNeeded();
-  console.log(`[DEBUG AI] getResponse вызван.`);
+  console.log(`[DEBUG AI] getResponse called.`);
 
-  // 1. AI ОПРЕДЕЛЯЕТ НУЖЕН ЛИ ПОИСК
+  // 1. AI Р С›Р СџР В Р вЂўР вЂќР вЂўР вЂєР Р‡Р вЂўР Сћ Р СњР Р€Р вЂ“Р вЂўР Сњ Р вЂєР В Р СџР С›Р ВР РЋР С™
   const recentHistory = history.slice(-5).map(m => `${m.role}: ${m.text}`).join('\n');
   const searchDecision = await this.checkSearchNeeded(
       currentMessage.text,
@@ -236,38 +214,38 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   let searchResultText = "";
 
   if (searchDecision.needsSearch && searchDecision.searchQuery) {
-      // 2. ПОИСК ЧЕРЕЗ TAVILY / PERPLEXITY
+      // 2. Р СџР С›Р ВР РЋР С™ Р В§Р вЂўР В Р вЂўР вЂ” TAVILY / PERPLEXITY
       if (config.searchProvider !== 'google') {
           searchResultText = await this.performSearch(searchDecision.searchQuery);
       }
 
-      // 3. FALLBACK НА GOOGLE NATIVE SEARCH
-      // Если Tavily/Perplexity недоступен или провайдер = google
+      // 3. FALLBACK Р СњР С’ GOOGLE NATIVE SEARCH
+      // Р вЂўРЎРѓР В»Р С‘ Tavily/Perplexity Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р… Р С‘Р В»Р С‘ Р С—РЎР‚Р С•Р Р†Р В°Р в„–Р Т‘Р ВµРЎР‚ = google
       if (!searchResultText && this.keys.length > 0) {
-          console.log(`[ROUTER] Переключаюсь на Google Native Search.`);
+          console.log(`[ROUTER] Switching to Google Native Search.`);
           return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
       }
   }
 
-  // 2. СБОРКА ПРОМПТА
+  // 2. Р РЋР вЂР С›Р В Р С™Р С’ Р СџР В Р С›Р СљР СџР СћР С’
   const relevantHistory = history.slice(-20); 
   const contextStr = relevantHistory.map(m => `${m.role}: ${m.text}`).join('\n');
   let personalInfo = "";
   let replyContext = "";
 
-  if (currentMessage.replyText) replyContext = `!!! ПОЛЬЗОВАТЕЛЬ ОТВЕТИЛ НА СООБЩЕНИЕ:\n"${currentMessage.replyText}"`;
-  if (userInstruction) personalInfo += `\n!!! СПЕЦ-ИНСТРУКЦИЯ !!!\n${userInstruction}\n`;
+  if (currentMessage.replyText) replyContext = responses.ai.replyContext(currentMessage.replyText);
+  if (userInstruction) personalInfo += responses.ai.specialInstruction(userInstruction);
   
   if (searchResultText) {
-      personalInfo += `\n!!! ДАННЫЕ ИЗ ПОИСКА (${config.searchProvider.toUpperCase()}) !!!\n${searchResultText}\nИНСТРУКЦИЯ: Ответь, используя эти факты. УКАЖИ ССЫЛКИ.\n`;
+      personalInfo += responses.ai.searchData(config.searchProvider, searchResultText);
   }
 
   if (userProfile) {
       const score = userProfile.relationship || 50;
-      let relationText = score <= 20 ? "СТАТУС: ВРАГ." : score >= 80 ? "СТАТУС: БРАТАН." : "СТАТУС: НЕЙТРАЛЬНО.";
-      personalInfo += `\n--- ДОСЬЕ ---\nФакты: ${userProfile.facts || "Нет"}\n`;
-      if (userProfile.location) personalInfo += `📍 Локация: ${userProfile.location}\n`;
-      personalInfo += `${relationText}\n-----------------\n`;
+      let relationText = score <= 20 ? responses.ai.relationStatus.enemy : score >= 80 ? responses.ai.relationStatus.friend : responses.ai.relationStatus.neutral;
+      personalInfo += `${responses.ai.dossier.header}${responses.ai.dossier.factsLabel}${userProfile.facts || responses.ai.dossier.noFacts}\n`;
+      if (userProfile.location) personalInfo += `${responses.ai.dossier.locationLabel}${userProfile.location}\n`;
+      personalInfo += `${relationText}\n${responses.ai.dossier.footer}`;
   }
 
   const fullPromptText = prompts.mainChat({
@@ -281,7 +259,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
       chatContext: chatProfile
   });
 
-  // 3. ЗАПРОС К SMART МОДЕЛИ (API)
+  // 3. Р вЂ”Р С’Р СџР В Р С›Р РЋ Р С™ SMART Р СљР С›Р вЂќР вЂўР вЂєР В (API)
   if (this.openai) {
       try {
           const messages = [{ role: "system", content: prompts.system() }, { role: "user", content: [] }];
@@ -307,33 +285,28 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
       }
   }
 
-  // 4. FALLBACK (Если API упал или ключа нет)
+  // 4. FALLBACK (Р вЂўРЎРѓР В»Р С‘ API РЎС“Р С—Р В°Р В» Р С‘Р В»Р С‘ Р С”Р В»РЎР‹РЎвЂЎР В° Р Р…Р ВµРЎвЂљ)
   return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
 }
 
-// Helper для Native вызова (чтобы не дублировать код)
+// Helper Р Т‘Р В»РЎРЏ Native Р Р†РЎвЂ№Р В·Р С•Р Р†Р В° (РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р Р…Р Вµ Р Т‘РЎС“Р В±Р В»Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С”Р С•Р Т‘)
 async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile = null) {
     const relevantHistory = history.slice(-20);
     const contextStr = relevantHistory.map(m => `${m.role}: ${m.text}`).join('\n');
 
-    // Собираем полную информацию о пользователе (как в основном методе)
+    // Р РЋР С•Р В±Р С‘РЎР‚Р В°Р ВµР С Р С—Р С•Р В»Р Р…РЎС“РЎР‹ Р С‘Р Р…РЎвЂћР С•РЎР‚Р СР В°РЎвЂ Р С‘РЎР‹ Р С• Р С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»Р Вµ (Р С”Р В°Р С” Р Р† Р С•РЎРѓР Р…Р С•Р Р†Р Р…Р С•Р С Р СР ВµРЎвЂљР С•Р Т‘Р Вµ)
     let personalInfo = "";
     let replyContext = "";
 
-    if (currentMessage.replyText) {
-        replyContext = `!!! ПОЛЬЗОВАТЕЛЬ ОТВЕТИЛ НА СООБЩЕНИЕ:\n"${currentMessage.replyText}"`;
-    }
-
-    if (userInstruction) {
-        personalInfo += `\n!!! СПЕЦ-ИНСТРУКЦИЯ !!!\n${userInstruction}\n`;
-    }
+    if (currentMessage.replyText) replyContext = responses.ai.replyContext(currentMessage.replyText);
+    if (userInstruction) personalInfo += responses.ai.specialInstruction(userInstruction);
 
     if (userProfile) {
         const score = userProfile.relationship || 50;
-        let relationText = score <= 20 ? "СТАТУС: ВРАГ." : score >= 80 ? "СТАТУС: БРАТАН." : "СТАТУС: НЕЙТРАЛЬНО.";
-        personalInfo += `\n--- ДОСЬЕ ---\nФакты: ${userProfile.facts || "Нет"}\n`;
-        if (userProfile.location) personalInfo += `📍 Локация: ${userProfile.location}\n`;
-        personalInfo += `${relationText}\n-----------------\n`;
+        let relationText = score <= 20 ? responses.ai.relationStatus.enemy : score >= 80 ? responses.ai.relationStatus.friend : responses.ai.relationStatus.neutral;
+        personalInfo += `${responses.ai.dossier.header}${responses.ai.dossier.factsLabel}${userProfile.facts || responses.ai.dossier.noFacts}\n`;
+        if (userProfile.location) personalInfo += `${responses.ai.dossier.locationLabel}${userProfile.location}\n`;
+        personalInfo += `${relationText}\n${responses.ai.dossier.footer}`;
     }
 
     const fullPromptText = prompts.mainChat({
@@ -360,19 +333,19 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
       let text = result.response.text();
       if (result.response.candidates[0].groundingMetadata?.groundingChunks) {
            const links = result.response.candidates[0].groundingMetadata.groundingChunks
-              .filter(c => c.web?.uri).map(c => `[${c.web.title || "Источник"}](${c.web.uri})`);
+              .filter(c => c.web?.uri).map(c => `[${c.web.title || responses.ai.sourceLinkTitle}](${c.web.uri})`);
            const unique = [...new Set(links)].slice(0, 3);
-           if (unique.length > 0) text += "\n\nНашел тут: " + unique.join(" • ");
+           if (unique.length > 0) text += responses.ai.sourceLinksPrefix + unique.join(responses.ai.sourceLinksJoiner);
       }
       return text;
     });
 }
 
-// === ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ (LOGIC MODEL) ===
+// === Р вЂ™Р РЋР СџР С›Р СљР С›Р вЂњР С’Р СћР вЂўР вЂєР В¬Р СњР В«Р вЂў Р СљР вЂўР СћР С›Р вЂќР В« (LOGIC MODEL) ===
   
-  // Универсальный метод для логики
+  // Р Р€Р Р…Р С‘Р Р†Р ВµРЎР‚РЎРѓР В°Р В»РЎРЉР Р…РЎвЂ№Р в„– Р СР ВµРЎвЂљР С•Р Т‘ Р Т‘Р В»РЎРЏ Р В»Р С•Р С–Р С‘Р С”Р С‘
   async runLogicModel(promptJson) {
-    // 1. Пробуем через API (Logic Model)
+    // 1. Р СџРЎР‚Р С•Р В±РЎС“Р ВµР С РЎвЂЎР ВµРЎР‚Р ВµР В· API (Logic Model)
     if (this.openai) {
         try {
             const completion = await this.openai.chat.completions.create({
@@ -396,7 +369,7 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
     } catch (e) { return null; }
 }
 
-// Простой текстовый ответ (для реакций и ShouldAnswer)
+// Р СџРЎР‚Р С•РЎРѓРЎвЂљР С•Р в„– РЎвЂљР ВµР С”РЎРѓРЎвЂљР С•Р Р†РЎвЂ№Р в„– Р С•РЎвЂљР Р†Р ВµРЎвЂљ (Р Т‘Р В»РЎРЏ РЎР‚Р ВµР В°Р С”РЎвЂ Р С‘Р в„– Р С‘ ShouldAnswer)
 async runLogicText(promptText) {
     if (this.openai) {
         try {
@@ -415,7 +388,7 @@ async analyzeUserImmediate(lastMessages, currentProfile) {
     return this.runLogicModel(prompts.analyzeImmediate(currentProfile, lastMessages));
 }
 
-// Определение необходимости поиска (AI-решение вместо regex)
+// Р С›Р С—РЎР‚Р ВµР Т‘Р ВµР В»Р ВµР Р…Р С‘Р Вµ Р Р…Р ВµР С•Р В±РЎвЂ¦Р С•Р Т‘Р С‘Р СР С•РЎРѓРЎвЂљР С‘ Р С—Р С•Р С‘РЎРѓР С”Р В° (AI-РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ Р Р†Р СР ВµРЎРѓРЎвЂљР С• regex)
 async checkSearchNeeded(userMessage, recentHistory, chatTopic) {
     const prompt = prompts.shouldSearch(
         this.getCurrentTime(),
@@ -434,8 +407,8 @@ async checkSearchNeeded(userMessage, recentHistory, chatTopic) {
         console.error(`[SEARCH CHECK ERROR] ${e.message}`);
     }
 
-    // Fallback: не искать если AI не ответил
-    return { needsSearch: false, searchQuery: null, reason: "fallback" };
+    // Fallback: Р Р…Р Вµ Р С‘РЎРѓР С”Р В°РЎвЂљРЎРЉ Р ВµРЎРѓР В»Р С‘ AI Р Р…Р Вµ Р С•РЎвЂљР Р†Р ВµРЎвЂљР С‘Р В»
+    return { needsSearch: false, searchQuery: null, reason: responses.ai.searchFallbackReason };
 }
 
 async analyzeBatch(messagesBatch, currentProfiles) {
@@ -444,13 +417,13 @@ async analyzeBatch(messagesBatch, currentProfiles) {
     return this.runLogicModel(prompts.analyzeBatch(knownInfo, chatLog));
 }
 
-// Анализ профиля чата (каждые 50 сообщений)
+// Р С’Р Р…Р В°Р В»Р С‘Р В· Р С—РЎР‚Р С•РЎвЂћР С‘Р В»РЎРЏ РЎвЂЎР В°РЎвЂљР В° (Р С”Р В°Р В¶Р Т‘РЎвЂ№Р Вµ 50 РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р в„–)
 async analyzeChatProfile(messagesBatch, currentProfile) {
     const messagesText = messagesBatch.map(m => `${m.name}: ${m.text}`).join('\n');
     return this.runLogicModel(prompts.analyzeChatProfile(currentProfile, messagesText));
 }
 
-// Обработка ручного описания чата (команда "Сыч, этот чат про...")
+// Р С›Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”Р В° РЎР‚РЎС“РЎвЂЎР Р…Р С•Р С–Р С• Р С•Р С—Р С‘РЎРѓР В°Р Р…Р С‘РЎРЏ РЎвЂЎР В°РЎвЂљР В° (Р С”Р С•Р СР В°Р Р…Р Т‘Р В° "Р РЋРЎвЂ№РЎвЂЎ, РЎРЊРЎвЂљР С•РЎвЂљ РЎвЂЎР В°РЎвЂљ Р С—РЎР‚Р С•...")
 async processManualChatDescription(description, currentProfile) {
     return this.runLogicModel(prompts.processManualChatDescription(description, currentProfile));
 }
@@ -470,7 +443,7 @@ async generateProfileDescription(profileData, targetName) {
           storage.incrementStat('smart'); return completion.choices[0].message.content;
       } catch(e) {}
     }
-    return "Не знаю такого.";
+    return responses.ai.unknownProfile;
 }
 
 async generateFlavorText(task, result) {
@@ -483,11 +456,11 @@ async generateFlavorText(task, result) {
   return `${result}`;
 }
 
-  // === ТРАНСКРИБАЦИЯ ===
+  // === Р СћР В Р С’Р СњР РЋР С™Р В Р ВР вЂР С’Р В¦Р ВР Р‡ ===
   async transcribeAudio(audioBuffer, userName, mimeType) {
-    // Только Native поддерживает загрузку файлов из буфера так легко и бесплатно
+    // Р СћР С•Р В»РЎРЉР С”Р С• Native Р С—Р С•Р Т‘Р Т‘Р ВµРЎР‚Р В¶Р С‘Р Р†Р В°Р ВµРЎвЂљ Р В·Р В°Р С–РЎР‚РЎС“Р В·Р С”РЎС“ РЎвЂћР В°Р в„–Р В»Р С•Р Р† Р С‘Р В· Р В±РЎС“РЎвЂћР ВµРЎР‚Р В° РЎвЂљР В°Р С” Р В»Р ВµР С–Р С”Р С• Р С‘ Р В±Р ВµРЎРѓР С—Р В»Р В°РЎвЂљР Р…Р С•
     if (!this.keys || this.keys.length === 0) {
-        console.warn("[AI WARN] Получено голосовое, но нет ключей Google для расшифровки. Пропускаю.");
+        console.warn("[AI WARN] Voice received, but there are no Google keys for transcription. Skipping.");
         return null;
     }
 
@@ -506,7 +479,7 @@ async generateFlavorText(task, result) {
     }
   }
 
-  // === ПАРСИНГ НАПОМИНАНИЯ (С КОНТЕКСТОМ) ===
+  // === Р СџР С’Р В Р РЋР ВР СњР вЂњ Р СњР С’Р СџР С›Р СљР ВР СњР С’Р СњР ВР Р‡ (Р РЋ Р С™Р С›Р СњР СћР вЂўР С™Р РЋР СћР С›Р Сљ) ===
   async parseReminder(userText, contextText = "") {
     const now = this.getCurrentTime();
     const prompt = prompts.parseReminder(now, userText, contextText);
