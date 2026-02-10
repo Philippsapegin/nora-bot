@@ -1,10 +1,9 @@
-name: Deploy Sych Bot
+name: Nora Deploy
 
 on:
   push:
     branches:
       - main
-      - master
 
 jobs:
   deploy:
@@ -16,22 +15,7 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
-          port: 22
           script: |
-            # 1. Загружаем переменные окружения (чтобы работали npm и pm2)
-            # Это нужно, потому что SSH сессия GitHub "слепая" и не видит пути
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-            source ~/.bashrc
-
-            # 2. Переходим в папку (ИСПРАВИЛ ОПЕЧАТКУ sych-bot -> sych_bot)
-            cd /home/your_user/sych_bot
-            
-            # 3. Скачиваем обновления
+            cd /opt/projects/nora-bot
             git pull origin main
-            
-            # 4. Обновляем библиотеки
-            npm install --production
-            
-            # 5. Перезапускаем бота
-            pm2 restart sych-bot
+            docker compose up -d --build
