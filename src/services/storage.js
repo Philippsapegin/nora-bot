@@ -65,11 +65,15 @@ class StorageService {
   load() {
     try {
       this.data = JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
-      // Если базы напоминаний нет — создаем пустую
       if (!this.data.bannedUsers) this.data.bannedUsers = {}; // { userId: "reason/name" }
+      // Миграция старой базы: удаляем данные вырезанной системы.
+      if (Object.prototype.hasOwnProperty.call(this.data, 'reminders')) {
+        delete this.data.reminders;
+        this.save();
+      }
     } catch (e) { 
       console.error("Ошибка чтения DB, сброс."); 
-      this.data = { chats: {}, reminders: [] };
+      this.data = { chats: {}, bannedUsers: {} };
     }
     // Грузим профили
     try {
@@ -81,6 +85,14 @@ class StorageService {
     // Грузим профили чатов
     try {
       this.chatProfiles = JSON.parse(fs.readFileSync(CHAT_PROFILES_PATH, 'utf-8'));
+      let removedLegacyStyle = false;
+      for (const profile of Object.values(this.chatProfiles)) {
+        if (profile && typeof profile === 'object' && Object.prototype.hasOwnProperty.call(profile, 'style')) {
+          delete profile.style;
+          removedLegacyStyle = true;
+        }
+      }
+      if (removedLegacyStyle) this.saveChatProfiles();
     } catch (e) {
       console.error("Ошибка чтения ChatProfiles, сброс.");
       this.chatProfiles = {};
@@ -103,45 +115,6 @@ class StorageService {
       console.error("Ошибка чтения Stats, сброс.");
       this.stats = this._getDefaultStats();
     }
-  }
-
-  // === НАПОМИНАЛКИ (Новые методы) ===
-
-  addReminder(chatId, userId, username, timeIso, text) {
-    if (!this.data.reminders) this.data.reminders = [];
-    
-    this.data.reminders.push({
-        id: Date.now() + Math.random(), // Уникальный ID
-        chatId,
-        userId,
-        username,
-        time: timeIso, // Время срабатывания (ISO string)
-        text: text
-    });
-    this.save();
-  }
-
-  // Получить задачи, время которых пришло
-  getPendingReminders() {
-    if (!this.data.reminders) return [];
-    
-    // Берем текущее время как ЧИСЛО (миллисекунды с 1970 года)
-    const now = Date.now();
-    
-    return this.data.reminders.filter(r => {
-        // Превращаем время из базы тоже в ЧИСЛО
-        const taskTime = new Date(r.time).getTime();
-        
-        // Если время задачи меньше или равно текущему — пора слать!
-        return taskTime <= now;
-    });
-  }
-
-  // Удалить сработавшие задачи
-  removeReminders(ids) {
-    if (!this.data.reminders) return;
-    this.data.reminders = this.data.reminders.filter(r => !ids.includes(r.id));
-    this.save();
   }
 
   // Вызываем отложенную запись
@@ -363,14 +336,6 @@ class StorageService {
     }
   }
 
-  getRandomUser(chatId) {
-    const chat = this.getChat(chatId);
-    const ids = Object.keys(chat.users);
-    if (ids.length === 0) return null;
-    const randomId = ids[Math.floor(Math.random() * ids.length)];
-    return chat.users[randomId];
-  }
-
   isTopicMuted(chatId, threadId) {
     const chat = this.getChat(chatId);
     // Исправление: проверяем именно на null/undefined, чтобы цифра 0 не превращалась в 'general'
@@ -564,7 +529,7 @@ class StorageService {
   // Получить профиль чата (или пустой объект)
   getChatProfile(chatId) {
     if (!this.chatProfiles[chatId]) {
-      return { topic: null, facts: null, style: null, lastUpdated: null };
+      return { topic: null, facts: null, lastUpdated: null };
     }
     return this.chatProfiles[chatId];
   }
@@ -577,7 +542,7 @@ class StorageService {
   // Обновить профиль чата (после AI-анализа)
   updateChatProfile(chatId, updates) {
     if (!this.chatProfiles[chatId]) {
-      this.chatProfiles[chatId] = { topic: null, facts: null, style: null, lastUpdated: null };
+      this.chatProfiles[chatId] = { topic: null, facts: null, lastUpdated: null };
     }
 
     const current = this.chatProfiles[chatId];
@@ -594,11 +559,6 @@ class StorageService {
       current.facts = updates.facts.substring(0, 500);
     }
 
-    // Обновляем стиль
-    if (updates.style) {
-      current.style = updates.style;
-    }
-
     current.lastUpdated = new Date().toISOString();
     this.chatProfiles[chatId] = current;
     this.saveChatProfiles();
@@ -606,18 +566,6 @@ class StorageService {
     console.log(`[CHAT PROFILE] Обновлен профиль чата ${chatId}: "${current.topic}"`);
   }
 
-  // Установить тему вручную (команда "Сыч, этот чат про...")
-  setChatTopic(chatId, topic) {
-    if (!this.chatProfiles[chatId]) {
-      this.chatProfiles[chatId] = { topic: null, facts: null, style: null, lastUpdated: null };
-    }
-
-    this.chatProfiles[chatId].topic = topic.substring(0, 200);
-    this.chatProfiles[chatId].lastUpdated = new Date().toISOString();
-    this.saveChatProfiles();
-
-    console.log(`[CHAT PROFILE] Тема установлена вручную для ${chatId}: "${topic}"`);
-  }
 }
 
 module.exports = new StorageService();

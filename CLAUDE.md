@@ -45,7 +45,7 @@ Auto-deployment triggers on push to `main` via GitHub Actions (`.github/workflow
 
 ```
 src/
-├── index.js           # Bot initialization, polling, reminder ticker (60s interval)
+├── index.js           # Bot initialization and polling
 ├── config.js          # Environment config, API keys, model selection
 ├── core/
 │   ├── logic.js       # Main message handler and decision logic
@@ -58,9 +58,9 @@ src/
 ```
 
 ### Data Storage (`/data` directory)
-- `db.json` - Chats, reminders, banned users
+- `db.json` - Chats and banned users
 - `profiles.json` - User profiles (reputation, traits, interests)
-- `chatProfiles.json` - Chat profiles (topic, facts, style)
+- `chatProfiles.json` - Factual chat profiles (topic and facts)
 - `instructions.json` - User-specific instructions
 
 ### Message Processing Flow
@@ -75,11 +75,13 @@ src/
 
 ### Hybrid AI Model Strategy
 
-| Purpose | Model | Usage |
-|---------|-------|-------|
-| Logic/Analysis | `google/gemma-3-27b-it` | Context analysis, decide if response needed, emoji selection |
-| Smart Responses | `google/gemini-3-flash-preview` | Generate conversational replies |
-| Fallback | `gemini-2.5-flash-lite` | Google Gemini native when quota exhausted |
+| Purpose | Environment variable | Usage |
+|---------|----------------------|-------|
+| Logic/Analysis | `AI_LOGIC_MODEL` | Context analysis, search routing, emoji selection |
+| Smart Responses | `AI_MAIN_MODEL` | Generate conversational replies |
+| Google Native | `GOOGLE_NATIVE_MODEL` | Native Gemini and Google Search |
+| Fallback | `GOOGLE_FALLBACK_MODEL` | Google Gemini fallback |
+| Perplexity Search | `PERPLEXITY_MODEL` | Search through OpenRouter |
 
 **Fallback chain**: OpenRouter → Google Gemini (rotates through multiple keys) → Admin notification
 
@@ -95,10 +97,15 @@ TELEGRAM_BOT_TOKEN     # From @BotFather
 ADMIN_USER_ID          # Your Telegram ID (controls admin features)
 AI_API_KEY             # OpenRouter API key
 AI_BASE_URL            # Optional, defaults to OpenRouter
+AI_MAIN_MODEL          # Main conversational model ID
+AI_LOGIC_MODEL         # Logic and JSON analysis model ID
 SEARCH_PROVIDER        # tavily | perplexity | google
 TAVILY_API_KEY         # If using Tavily search
+PERPLEXITY_MODEL       # Perplexity model ID when that provider is selected
 GOOGLE_GEMINI_API_KEY  # Required for fallback
 GOOGLE_GEMINI_API_KEY_2 # Optional additional keys for rotation
+GOOGLE_NATIVE_MODEL    # Native Gemini model ID
+GOOGLE_FALLBACK_MODEL  # Gemini fallback model ID
 ```
 
 See `.env.example` for full configuration template.
@@ -123,12 +130,11 @@ See `.env.example` for full configuration template.
 
 Бот запоминает информацию о чатах в `chatProfiles.json`.
 
-**Поля профиля чата:** `topic`, `facts`, `style`, `lastUpdated`
+**Поля профиля чата:** `topic`, `facts`, `lastUpdated`
 
 **Механизмы обновления:**
 - **Batch**: каждые 50 сообщений анализирует тему и факты чата
 - **Инициализация**: при пустом профиле и наличии 10+ сообщений в истории
-- **Ручная команда**: `Сыч, этот чат про [описание]`
 
 **Лимиты:**
 - `topic`: до 200 символов (1-2 предложения)
@@ -151,7 +157,5 @@ See `.env.example` for full configuration template.
 - `/start` - Bot info
 - `/ban [username]` - Ban user (admin only)
 - `/unban [ID]` - Restore user (admin only)
-- `Сыч напомни [текст]` - Set reminder
 - `Сыч кто я?` - Show user profile
 - `Сыч стата` - Show token usage statistics
-- `Сыч, этот чат про [тема]` - Set chat topic manually

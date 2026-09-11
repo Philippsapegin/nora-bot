@@ -14,7 +14,6 @@ const CHAT_BUFFER_SIZE = 50; // Анализируем чат каждые 50 с
 const recentActiveUsers = []; 
 const noraTriggerForms = '(?:нора|норы|норе|нору|норой|норою)';
 const noraStatsRegex = new RegExp(`^${noraTriggerForms}\\W+(?:стата|статистика)$`);
-const noraWhoRegex = new RegExp(`^${noraTriggerForms}\\W+кто\\??$`);
 
 // === ГЕНЕРАТОР ОТМАЗОК СЫЧА ===
 function getSychErrorReply(errText) {
@@ -244,59 +243,7 @@ async function processMessage(bot, msg) {
     return;
   }
 
-   // === ОБРАБОТКА ГОЛОСОВЫХ (Voice to Text) ===
-   if (msg.voice || msg.audio) {
-    startTyping(); 
-
-    try {
-        const media = msg.voice || msg.audio;
-        const fileId = media.file_id;
-        const mimeType = msg.voice ? 'audio/ogg' : (media.mime_type || 'audio/mpeg');
-        const link = await bot.getFileLink(fileId);
-        const resp = await axios.get(link, { responseType: 'arraybuffer' });
-        const buffer = Buffer.from(resp.data);
-        const userName = msg.from.first_name || responses.voice.unknownUserName;
-
-        const transcription = await ai.transcribeAudio(buffer, userName, mimeType);
-        
-        stopTyping();
-
-        if (transcription) {
-            let replyText = "";
-            
-            // Считаем длины
-            const fullLen = transcription.text.length;
-            const tldrLen = transcription.summary.length;
-
-            // Логика полезности TLDR:
-            // Показываем суть, только если она короче оригинала хотя бы на 15% (умножаем на 0.85).
-            // Если TLDR почти такой же длины или длиннее — в нем нет смысла.
-            const isTldrUseful = tldrLen < (fullLen * 0.65);
-
-            if (isTldrUseful) {
-                replyText = responses.voice.tldrReply(transcription.summary, transcription.text);
-            } else {
-                // Если TLDR бесполезен, просто пишем кто сказал
-                replyText = responses.voice.fullReply(userName, transcription.text);
-            }
-
-            // Останавливаем "печатает"
-            try { await bot.sendMessage(chatId, replyText, getReplyOptions(msg)); } catch(e) {}
-            
-            // !!! ВАЖНО: Если чат в муте — на этом всё. Не отвечаем на содержимое.
-            if (storage.isTopicMuted(chatId, threadId)) return;
-
-            // Если не в муте — подменяем текст, чтобы бот мог прокомментировать
-            text = transcription.text; 
-            msg.text = transcription.text;
-        }
-    } catch (e) {
-        console.error("Ошибка голосового:", e.message);
-    }
-}
-
-  
-    if (!text && !msg.photo && !msg.sticker && !msg.voice && !msg.audio) return;
+  if (!text && !msg.photo && !msg.video && !msg.document && !msg.sticker) return;
 
   if (msg.chat.type === 'private') {
     if (userId !== config.adminId) return;
@@ -431,57 +378,8 @@ async function processMessage(bot, msg) {
     return bot.sendMessage(chatId, report, getReplyOptions(msg));
   }
 
-  // === НАПОМИНАЛКИ ===
-  if (isDirectlyCalled && (cleanText.includes("напомни") || cleanText.includes("напоминай"))) {
-      
-    bot.sendChatAction(chatId, 'typing', getActionOptions(threadId)).catch(() => {});
-    console.log(`[LOGIC] Обнаружен запрос на напоминание: ${text}`);
-
-    // 1. Вытаскиваем текст сообщения, на которое ответили (если есть)
-    const replyContent = msg.reply_to_message 
-        ? (msg.reply_to_message.text || msg.reply_to_message.caption || "") 
-        : "";
-
-    // 2. Передаем и запрос юзера, и контекст реплая
-    const parsed = await ai.parseReminder(text, replyContent);
-    
-    if (parsed && parsed.targetTime) {
-        const username = msg.from.username ? `@${msg.from.username}` : msg.from.first_name;
-        
-        storage.addReminder(chatId, userId, username, parsed.targetTime, parsed.reminderText);
-        
-        console.log(`[REMINDER SET] Установлено на: ${parsed.targetTime}`);
-        return bot.sendMessage(chatId, parsed.confirmation, getReplyOptions(msg));
-    } else {
-        console.log(`[REMINDER ERROR] AI не смог распарсить время.`);
-    }
-}
-
-
   // === ФИЧИ ===
   if (hasTriggerWord) {
-      // Команда "Нора, этот чат про..." — используем оригинальный текст (не lowercase)
-      const chatTopicMatch = text.match(/(?:этот чат про|чат про|мы тут|здесь мы)\s+([\s\S]+)/i);
-      if (chatTopicMatch) {
-          const description = chatTopicMatch[1].trim();
-          if (description.length > 10) {
-              startTyping();
-              const currentProfile = storage.getChatProfile(chatId);
-              const updates = await ai.processManualChatDescription(description, currentProfile);
-              stopTyping();
-
-              if (updates && updates.topic) {
-                  storage.updateChatProfile(chatId, updates);
-                  const factsInfo = updates.facts ? responses.features.chatFactsInfo(updates.facts) : '';
-                  try { return await bot.sendMessage(chatId, responses.features.chatTopicSaved(updates.topic, factsInfo), getReplyOptions(msg)); } catch(e){}
-              } else {
-                  // Fallback если AI не ответил
-                  storage.setChatTopic(chatId, description.substring(0, 200));
-                  try { return await bot.sendMessage(chatId, responses.features.chatTopicSavedFallback(description), getReplyOptions(msg)); } catch(e){}
-              }
-          }
-      }
-
       const aboutMatch = cleanText.match(/(?:расскажи про|кто так(?:ой|ая)|мнение о|поясни за)\s+(.+)/);
       if (aboutMatch) {
         const targetName = aboutMatch[1].replace('?', '').trim();
@@ -494,31 +392,6 @@ async function processMessage(bot, msg) {
         }
     }
       
-      if (cleanText.match(/(монетк|кинь|брось|подбрось|подкинь)/)) {
-          try { await bot.sendChatAction(chatId, 'typing', getActionOptions(threadId)); } catch(e){}
-          const result = responses.features.coinFlipResult(Math.random() > 0.5);
-          const flavor = await ai.generateFlavorText(responses.features.coinFlipTask, result);
-          try { return await bot.sendMessage(chatId, flavor, getReplyOptions(msg)); } catch(e){}
-      }
-
-      const rangeMatch = cleanText.match(/(\d+)-(\d+)/);
-      if ((cleanText.includes("число") || cleanText.includes("рандом")) && rangeMatch) {
-          try { await bot.sendChatAction(chatId, 'typing', getActionOptions(threadId)); } catch(e){}
-          const min = parseInt(rangeMatch[1]);
-          const max = parseInt(rangeMatch[2]);
-          const rand = Math.floor(Math.random() * (max - min + 1)) + min;
-          const flavor = await ai.generateFlavorText(responses.features.numberPickTask(min, max), String(rand));
-          try { return await bot.sendMessage(chatId, flavor, getReplyOptions(msg)); } catch(e){}
-      }
-      
-      const isWhoGame = cleanText.match(/(?:кто|кого)\s+(?:из нас|тут|здесь|в чате|сегодня)/) || noraWhoRegex.test(cleanText.trim());
-      if (isWhoGame) {
-          try { await bot.sendChatAction(chatId, 'typing', getActionOptions(threadId)); } catch(e){}
-          const randomUser = storage.getRandomUser(chatId);
-          if (!randomUser) return bot.sendMessage(chatId, responses.features.noKnownUsersYet, getBaseOptions(threadId));
-          const flavor = await ai.generateFlavorText(responses.features.whoGameTask(text), randomUser);
-          try { return await bot.sendMessage(chatId, flavor, getReplyOptions(msg)); } catch(e){}
-      }
   }
 
   // === РЕШЕНИЕ ОБ ОТВЕТЕ ===

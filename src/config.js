@@ -12,6 +12,19 @@ while (process.env[`GOOGLE_GEMINI_API_KEY_${i}`]) {
 
 console.log(`[CONFIG] Загружено ключей Gemini (Native): ${geminiKeys.length}`);
 
+const requiredModelVars = ['AI_MAIN_MODEL', 'AI_LOGIC_MODEL'];
+if (geminiKeys.length > 0) {
+  requiredModelVars.push('GOOGLE_NATIVE_MODEL', 'GOOGLE_FALLBACK_MODEL');
+}
+if ((process.env.SEARCH_PROVIDER || 'tavily') === 'perplexity') {
+  requiredModelVars.push('PERPLEXITY_MODEL');
+}
+
+const missingModelVars = requiredModelVars.filter(name => !process.env[name]);
+if (missingModelVars.length > 0) {
+  throw new Error(`Не заданы модели в .env: ${missingModelVars.join(', ')}`);
+}
+
 module.exports = {
   // === TELEGRAM ===
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
@@ -23,14 +36,9 @@ module.exports = {
   aiBaseUrl: process.env.AI_BASE_URL || "https://openrouter.ai/api/v1",
   aiKey: process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY, 
 
-  // === АКТУАЛЬНЫЕ МОДЕЛИ (ЯНВАРЬ 2026) ===
-  
-  // 1. УМНАЯ (Ответы в чате)
-  mainModel: 'google/gemini-3-flash-preview', 
-  
-  // 2. ЛОГИКА (Анализ, реакции, проверки)
-  // Free версия недоступна, используем эффективную платную
-  logicModel: 'google/gemma-3-27b-it', 
+  // === МОДЕЛИ ===
+  mainModel: process.env.AI_MAIN_MODEL,
+  logicModel: process.env.AI_LOGIC_MODEL,
 
   // === ПОИСК (RAG или NATIVE) ===
   // Варианты: 
@@ -42,12 +50,12 @@ module.exports = {
   
   // Настройки провайдеров
   tavilyKey: process.env.TAVILY_API_KEY,
-  perplexityModel: 'perplexity/sonar', // Актуальный алиас
+  perplexityModel: process.env.PERPLEXITY_MODEL,
 
   // === GEMINI NATIVE (FALLBACK / SEARCH) ===
   geminiKeys: geminiKeys,
-  googleNativeModel: 'gemini-2.5-flash-lite', 
-  fallbackModelName: 'gemini-2.5-flash-lite', 
+  googleNativeModel: process.env.GOOGLE_NATIVE_MODEL,
+  fallbackModelName: process.env.GOOGLE_FALLBACK_MODEL,
   contextSize: 30,
   triggerRegex: /(?<![а-яёa-z])(нора|норы|норе|нору|норой|норою)(?![а-яёa-z])/i,
 };

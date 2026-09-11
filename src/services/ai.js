@@ -390,25 +390,38 @@ async analyzeUserImmediate(lastMessages, currentProfile) {
 
 // Р С›Р С—РЎР‚Р ВµР Т‘Р ВµР В»Р ВµР Р…Р С‘Р Вµ Р Р…Р ВµР С•Р В±РЎвЂ¦Р С•Р Т‘Р С‘Р СР С•РЎРѓРЎвЂљР С‘ Р С—Р С•Р С‘РЎРѓР С”Р В° (AI-РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ Р Р†Р СР ВµРЎРѓРЎвЂљР С• regex)
 async checkSearchNeeded(userMessage, recentHistory, chatTopic) {
-    const prompt = prompts.shouldSearch(
-        this.getCurrentTime(),
-        userMessage,
-        recentHistory,
-        chatTopic
-    );
+    const fallback = { needsSearch: false, searchQuery: null, reason: responses.ai.searchFallbackReason };
 
     try {
+        const prompt = prompts.shouldSearch(
+            this.getCurrentTime(),
+            userMessage,
+            recentHistory,
+            chatTopic
+        );
         const result = await this.runLogicModel(prompt);
-        if (result && typeof result.needsSearch === 'boolean') {
-            console.log(`[SEARCH CHECK] needsSearch=${result.needsSearch}, query="${result.searchQuery}", reason="${result.reason}"`);
-            return result;
-        }
+        if (!result || typeof result !== 'object' || typeof result.needsSearch !== 'boolean') return fallback;
+
+        const searchQuery = typeof result.searchQuery === 'string' && result.searchQuery.trim()
+            ? result.searchQuery.trim().slice(0, 500)
+            : null;
+
+        if (result.needsSearch && !searchQuery) return fallback;
+
+        const normalized = {
+            needsSearch: result.needsSearch,
+            searchQuery: result.needsSearch ? searchQuery : null,
+            reason: typeof result.reason === 'string' ? result.reason.slice(0, 100) : 'unspecified'
+        };
+
+        console.log(`[SEARCH CHECK] needsSearch=${normalized.needsSearch}, query="${normalized.searchQuery}", reason="${normalized.reason}"`);
+        return normalized;
     } catch (e) {
         console.error(`[SEARCH CHECK ERROR] ${e.message}`);
     }
 
     // Fallback: Р Р…Р Вµ Р С‘РЎРѓР С”Р В°РЎвЂљРЎРЉ Р ВµРЎРѓР В»Р С‘ AI Р Р…Р Вµ Р С•РЎвЂљР Р†Р ВµРЎвЂљР С‘Р В»
-    return { needsSearch: false, searchQuery: null, reason: responses.ai.searchFallbackReason };
+    return fallback;
 }
 
 async analyzeBatch(messagesBatch, currentProfiles) {
@@ -419,15 +432,32 @@ async analyzeBatch(messagesBatch, currentProfiles) {
 
 // Р С’Р Р…Р В°Р В»Р С‘Р В· Р С—РЎР‚Р С•РЎвЂћР С‘Р В»РЎРЏ РЎвЂЎР В°РЎвЂљР В° (Р С”Р В°Р В¶Р Т‘РЎвЂ№Р Вµ 50 РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р в„–)
 async analyzeChatProfile(messagesBatch, currentProfile) {
+    if (!Array.isArray(messagesBatch) || messagesBatch.length === 0) return null;
+
     const messagesText = messagesBatch.map(m => `${m.name}: ${m.text}`).join('\n');
-    return this.runLogicModel(prompts.analyzeChatProfile(currentProfile, messagesText));
+    try {
+        const result = await this.runLogicModel(prompts.analyzeChatProfile(currentProfile, messagesText));
+        if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+
+        const normalized = {};
+        const limits = { topic: 200, facts: 500 };
+
+        for (const [field, limit] of Object.entries(limits)) {
+            if (result[field] === null) continue;
+            if (typeof result[field] !== 'string') return null;
+
+            const value = result[field].trim();
+            if (value) normalized[field] = value.slice(0, limit);
+        }
+
+        return Object.keys(normalized).length > 0 ? normalized : null;
+    } catch (e) {
+        console.error(`[CHAT PROFILE ANALYSIS ERROR] ${e.message}`);
+        return null;
+    }
 }
 
 // Р С›Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”Р В° РЎР‚РЎС“РЎвЂЎР Р…Р С•Р С–Р С• Р С•Р С—Р С‘РЎРѓР В°Р Р…Р С‘РЎРЏ РЎвЂЎР В°РЎвЂљР В° (Р С”Р С•Р СР В°Р Р…Р Т‘Р В° "Р РЋРЎвЂ№РЎвЂЎ, РЎРЊРЎвЂљР С•РЎвЂљ РЎвЂЎР В°РЎвЂљ Р С—РЎР‚Р С•...")
-async processManualChatDescription(description, currentProfile) {
-    return this.runLogicModel(prompts.processManualChatDescription(description, currentProfile));
-}
-
 async determineReaction(contextText) {
   const allowed = ["👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷", "🤷‍♀", "😡"];
   const text = await this.runLogicText(prompts.reaction(contextText, allowed.join(" ")));
@@ -446,45 +476,10 @@ async generateProfileDescription(profileData, targetName) {
     return responses.ai.unknownProfile;
 }
 
-async generateFlavorText(task, result) {
-  if (this.openai) {
-      try {
-          const completion = await this.openai.chat.completions.create({ model: config.mainModel, messages: [{ role: "user", content: prompts.flavor(task, result) }] });
-          storage.incrementStat('smart'); return completion.choices[0].message.content.trim().replace(/^["']|["']$/g, '');
-      } catch(e) {}
-  }
-  return `${result}`;
-}
-
   // === Р СћР В Р С’Р СњР РЋР С™Р В Р ВР вЂР С’Р В¦Р ВР Р‡ ===
-  async transcribeAudio(audioBuffer, userName, mimeType) {
     // Р СћР С•Р В»РЎРЉР С”Р С• Native Р С—Р С•Р Т‘Р Т‘Р ВµРЎР‚Р В¶Р С‘Р Р†Р В°Р ВµРЎвЂљ Р В·Р В°Р С–РЎР‚РЎС“Р В·Р С”РЎС“ РЎвЂћР В°Р в„–Р В»Р С•Р Р† Р С‘Р В· Р В±РЎС“РЎвЂћР ВµРЎР‚Р В° РЎвЂљР В°Р С” Р В»Р ВµР С–Р С”Р С• Р С‘ Р В±Р ВµРЎРѓР С—Р В»Р В°РЎвЂљР Р…Р С•
-    if (!this.keys || this.keys.length === 0) {
-        console.warn("[AI WARN] Voice received, but there are no Google keys for transcription. Skipping.");
-        return null;
-    }
-
-    try {
-        return await this.executeNativeWithRetry(async () => {
-          const parts = [ { inlineData: { mimeType: mimeType, data: audioBuffer.toString("base64") } }, { text: prompts.transcription(userName) }];
-          const result = await this.nativeModel.generateContent(parts);
-          let text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-          const first = text.indexOf('{'), last = text.lastIndexOf('}');
-          if (first !== -1 && last !== -1) text = text.substring(first, last + 1);
-          return JSON.parse(text);
-        });
-    } catch (e) { 
-        console.error(`[TRANSCRIPTION FAIL] ${e.message}`);
-        return null; 
-    }
-  }
 
   // === Р СџР С’Р В Р РЋР ВР СњР вЂњ Р СњР С’Р СџР С›Р СљР ВР СњР С’Р СњР ВР Р‡ (Р РЋ Р С™Р С›Р СњР СћР вЂўР С™Р РЋР СћР С›Р Сљ) ===
-  async parseReminder(userText, contextText = "") {
-    const now = this.getCurrentTime();
-    const prompt = prompts.parseReminder(now, userText, contextText);
-    return this.runLogicModel(prompt);
-  }
 }
 
 module.exports = new AiService();

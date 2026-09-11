@@ -31,35 +31,6 @@ ai.setBot(bot);
 console.log(responses.index.startupLog);
 console.log(`Admin ID: ${config.adminId}`);
 
-// === ТИКЕР НАПОМИНАЛОК (Проверка каждую минуту) ===
-setInterval(() => {
-  const pending = storage.getPendingReminders();
-  
-  if (pending.length > 0) {
-      console.log(`[REMINDER] Сработало напоминаний: ${pending.length}`);
-      
-      const idsToRemove = [];
-
-      pending.forEach(task => {
-          // Формируем сообщение
-          const message = responses.index.reminderMessage(task);
-          
-          // Отправляем
-          bot.sendMessage(task.chatId, message).then(() => {
-              console.log(`[REMINDER] Успешно отправлено: ${task.text}`);
-          }).catch(err => {
-              console.error(`[REMINDER ERROR] Не смог отправить в ${task.chatId}: ${err.message}`);
-              // Если юзер заблочил бота, все равно удаляем, чтобы не спамить в лог ошибками
-          });
-
-          idsToRemove.push(task.id);
-      });
-
-      // Чистим базу
-      storage.removeReminders(idsToRemove);
-  }
-}, 60 * 1000); // 60000 мс = 1 минута
-
 // Обработка ошибок поллинга
 bot.on('polling_error', (error) => {
     console.error(`[POLLING ERROR] ${error.code}: ${error.message}`);
