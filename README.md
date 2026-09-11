@@ -73,10 +73,11 @@ npm install
 ```ini
 TELEGRAM_BOT_TOKEN=your_token
 ADMIN_USER_ID=123456789
-AI_API_KEY=your_openai_compatible_key
+AI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=your_openai_key
 GOOGLE_GEMINI_API_KEY=your_google_key
-AI_MAIN_MODEL=google/gemini-3-flash-preview
-AI_LOGIC_MODEL=google/gemma-3-27b-it
+AI_MAIN_MODEL=gpt-5.6-luna
+AI_LOGIC_MODEL=gpt-5.6-luna
 GOOGLE_NATIVE_MODEL=gemini-2.5-flash-lite
 GOOGLE_FALLBACK_MODEL=gemini-2.5-flash-lite
 ```

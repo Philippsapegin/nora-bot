@@ -25,6 +25,12 @@ if (missingModelVars.length > 0) {
   throw new Error(`Не заданы модели в .env: ${missingModelVars.join(', ')}`);
 }
 
+const aiBaseUrl = process.env.AI_BASE_URL || "https://api.openai.com/v1";
+const usesOfficialOpenAI = /^https:\/\/api\.openai\.com(?:\/|$)/i.test(aiBaseUrl);
+const aiKey = usesOfficialOpenAI
+  ? process.env.OPENAI_API_KEY || process.env.AI_API_KEY
+  : process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY;
+
 module.exports = {
   // === TELEGRAM ===
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
@@ -32,9 +38,10 @@ module.exports = {
   botId: parseInt(process.env.TELEGRAM_BOT_TOKEN.split(':')[0], 10),
   adminId: parseInt(process.env.ADMIN_USER_ID, 10),
   
-  // === OPENROUTER / API (Основной канал) ===
-  aiBaseUrl: process.env.AI_BASE_URL || "https://openrouter.ai/api/v1",
-  aiKey: process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY, 
+  // === ОСНОВНОЙ OPENAI-CОВМЕСТИМЫЙ API ===
+  aiBaseUrl,
+  aiKey,
+  usesOfficialOpenAI,
 
   // === МОДЕЛИ ===
   mainModel: process.env.AI_MAIN_MODEL,

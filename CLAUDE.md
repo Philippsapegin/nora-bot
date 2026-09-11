@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Sych Bot is a Telegram bot with hybrid AI architecture (OpenRouter primary, Google Gemini fallback). It's a stateful conversational agent with character, memory, and autonomous decision-making capabilities. The bot operates primarily in Russian.
+Sych Bot is a Telegram bot with hybrid AI architecture (OpenAI GPT-5.6 Luna primary, Google Gemini fallback). It's a stateful conversational agent with character, memory, and autonomous decision-making capabilities. The bot operates primarily in Russian.
 
 - **Node.js**: 18+ required
 - **Package Type**: CommonJS
@@ -83,7 +83,7 @@ src/
 | Fallback | `GOOGLE_FALLBACK_MODEL` | Google Gemini fallback |
 | Perplexity Search | `PERPLEXITY_MODEL` | Search through OpenRouter |
 
-**Fallback chain**: OpenRouter → Google Gemini (rotates through multiple keys) → Admin notification
+**Fallback chain**: OpenAI GPT-5.6 Luna → Google Gemini (rotates through multiple keys) → Admin notification
 
 ### Search Providers (configurable via `SEARCH_PROVIDER` env var)
 - Tavily (default, recommended)
@@ -95,8 +95,10 @@ src/
 ```
 TELEGRAM_BOT_TOKEN     # From @BotFather
 ADMIN_USER_ID          # Your Telegram ID (controls admin features)
-AI_API_KEY             # OpenRouter API key
-AI_BASE_URL            # Optional, defaults to OpenRouter
+OPENAI_API_KEY         # OpenAI API key
+AI_API_KEY             # Optional generic key for another compatible provider
+OPENROUTER_API_KEY     # Optional OpenRouter key
+AI_BASE_URL            # Optional, defaults to the official OpenAI API
 AI_MAIN_MODEL          # Main conversational model ID
 AI_LOGIC_MODEL         # Logic and JSON analysis model ID
 SEARCH_PROVIDER        # tavily | perplexity | google

@@ -9,15 +9,18 @@ const storage = require('./storage');
 
 class AiService {
   constructor() {
-    // 1. Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ OpenAI-РЎРѓР С•Р Р†Р СР ВµРЎРѓРЎвЂљР С‘Р СР С•Р С–Р С• Р С”Р В»Р С‘Р ВµР Р…РЎвЂљР В° (OpenRouter / Mistral / DeepSeek)
-    this.openai = config.aiKey ? new OpenAI({
+    // 1. Основной OpenAI-совместимый клиент
+    const openaiOptions = {
         baseURL: config.aiBaseUrl,
-        apiKey: config.aiKey,
-        defaultHeaders: {
-          "HTTP-Referer": "https://github.com/Veta-one/sych-bot",
-          "X-Title": responses.identity.botTitle
-        }
-    }) : null;
+        apiKey: config.aiKey
+    };
+    if (config.aiBaseUrl.includes('openrouter.ai')) {
+        openaiOptions.defaultHeaders = {
+            "HTTP-Referer": "https://github.com/Veta-one/sych-bot",
+            "X-Title": responses.identity.botTitle
+        };
+    }
+    this.openai = config.aiKey ? new OpenAI(openaiOptions) : null;
 
     // 2. Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ Tavily
     this.tavilyClient = config.tavilyKey ? tavily({ apiKey: config.tavilyKey }) : null;
@@ -271,12 +274,19 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
               });
           }
 
-          const completion = await this.openai.chat.completions.create({
+          const request = {
               model: config.mainModel,
-              messages: messages,
-              max_tokens: 2500,
-              temperature: 0.9,
-          });
+              messages: messages
+          };
+
+          if (config.usesOfficialOpenAI) {
+              request.max_completion_tokens = 2500;
+          } else {
+              request.max_tokens = 2500;
+              request.temperature = 0.9;
+          }
+
+          const completion = await this.openai.chat.completions.create(request);
           
           storage.incrementStat('smart'); 
           return completion.choices[0].message.content.replace(/^thought[\s\S]*?\n\n/i, ''); 
@@ -469,7 +479,13 @@ async determineReaction(contextText) {
 async generateProfileDescription(profileData, targetName) {
     if (this.openai) {
       try {
-          const completion = await this.openai.chat.completions.create({ model: config.mainModel, messages: [{ role: "user", content: prompts.profileDescription(targetName, profileData) }] });
+          const completion = await this.openai.chat.completions.create({
+              model: config.mainModel,
+              messages: [
+                  { role: "system", content: prompts.system() },
+                  { role: "user", content: prompts.profileDescription(targetName, profileData) }
+              ]
+          });
           storage.incrementStat('smart'); return completion.choices[0].message.content;
       } catch(e) {}
     }
