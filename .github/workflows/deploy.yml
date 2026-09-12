@@ -1,4 +1,4 @@
-name: Nora Deploy
+name: Stop old Nora
 
 on:
   push:
@@ -18,4 +18,4 @@ jobs:
           script: |
             cd /opt/projects/nora-bot
             git pull origin main
-            docker compose up -d --build --force-recreate
+            docker compose down
