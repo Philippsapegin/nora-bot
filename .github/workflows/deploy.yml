@@ -1,9 +1,7 @@
 name: Stop old Nora
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
