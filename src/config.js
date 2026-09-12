@@ -63,6 +63,7 @@ module.exports = {
   geminiKeys: geminiKeys,
   googleNativeModel: process.env.GOOGLE_NATIVE_MODEL,
   fallbackModelName: process.env.GOOGLE_FALLBACK_MODEL,
-  contextSize: 30,
+  contextSize: Math.max(2, parseInt(process.env.CONTEXT_MAX_MESSAGES, 10) || 20),
+  contextTtlMs: Math.max(1, parseInt(process.env.CONTEXT_TTL_MINUTES, 10) || 30) * 60 * 1000,
   triggerRegex: /(?<![а-яёa-z])(нора|норы|норе|нору|норой|норою)(?![а-яёa-z])/i,
 };

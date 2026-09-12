@@ -250,7 +250,7 @@ async performGoogleSearch(query) {
 }
   
 // === Р С›Р РЋР СњР С›Р вЂ™Р СњР С›Р в„ў Р С›Р СћР вЂ™Р вЂўР Сћ ===
-async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image/jpeg", userInstruction = "", userProfile = null, isSpontaneous = false, chatProfile = null) {
+async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image/jpeg", userInstruction = "", userProfile = null, isSpontaneous = false) {
   this.resetStatsIfNeeded();
   console.log(`[DEBUG AI] getResponse called.`);
 
@@ -258,8 +258,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   const recentHistory = history.slice(-5).map(m => `${m.role}: ${m.text}`).join('\n');
   const searchDecision = await this.checkSearchNeeded(
       currentMessage.text,
-      recentHistory,
-      chatProfile?.topic || null
+      recentHistory
   );
 
   let searchResultText = "";
@@ -312,8 +311,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
       replyContext: replyContext,
       history: contextStr,
       personalInfo: personalInfo,
-      senderName: currentMessage.sender,
-      chatContext: chatProfile
+      senderName: currentMessage.sender
   });
 
   // 3. Р вЂ”Р С’Р СџР В Р С›Р РЋ Р С™ SMART Р СљР С›Р вЂќР вЂўР вЂєР В (API)
@@ -354,7 +352,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
 
   if (this.nativeModel) {
       try {
-          return await this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
+          return await this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous);
       } catch (nativeError) {
           console.error(`[NATIVE FALLBACK FAIL] ${nativeError.message}`);
           if (!primaryError) primaryError = nativeError;
@@ -365,7 +363,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
 }
 
 // Helper Р Т‘Р В»РЎРЏ Native Р Р†РЎвЂ№Р В·Р С•Р Р†Р В° (РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р Р…Р Вµ Р Т‘РЎС“Р В±Р В»Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С”Р С•Р Т‘)
-async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile = null) {
+async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous) {
     const relevantHistory = history.slice(-20);
     const contextStr = relevantHistory.map(m => `${m.role}: ${m.text}`).join('\n');
 
@@ -391,8 +389,7 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
         replyContext: replyContext,
         history: contextStr,
         personalInfo: personalInfo,
-        senderName: currentMessage.sender,
-        chatContext: chatProfile
+        senderName: currentMessage.sender
     });
 
     return this.executeNativeWithRetry(async () => {
@@ -464,15 +461,14 @@ async analyzeUserImmediate(lastMessages, currentProfile) {
 }
 
 // Р С›Р С—РЎР‚Р ВµР Т‘Р ВµР В»Р ВµР Р…Р С‘Р Вµ Р Р…Р ВµР С•Р В±РЎвЂ¦Р С•Р Т‘Р С‘Р СР С•РЎРѓРЎвЂљР С‘ Р С—Р С•Р С‘РЎРѓР С”Р В° (AI-РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ Р Р†Р СР ВµРЎРѓРЎвЂљР С• regex)
-async checkSearchNeeded(userMessage, recentHistory, chatTopic) {
+async checkSearchNeeded(userMessage, recentHistory) {
     const fallback = { needsSearch: false, searchQuery: null, reason: responses.ai.searchFallbackReason };
 
     try {
         const prompt = prompts.shouldSearch(
             this.getCurrentTime(),
             userMessage,
-            recentHistory,
-            chatTopic
+            recentHistory
         );
         const result = await this.runLogicModel(prompt);
         if (!result || typeof result !== 'object' || typeof result.needsSearch !== 'boolean') return fallback;

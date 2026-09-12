@@ -3,13 +3,15 @@ const storage = require('../services/storage');
 const ai = require('../services/ai');
 const config = require('../config');
 const { responses } = require('./personality');
+const ConversationMemory = require('../services/conversationMemory');
 const axios = require('axios');
 const { exec } = require('child_process');
-const chatHistory = {};
+const conversationMemory = new ConversationMemory({
+  ttlMs: config.contextTtlMs,
+  maxMessages: config.contextSize,
+});
 const analysisBuffers = {};
-const chatAnalysisBuffers = {}; // Буфер для анализа профиля чата
 const BUFFER_SIZE = 20;
-const CHAT_BUFFER_SIZE = 50; // Анализируем чат каждые 50 сообщений
 // Храним 10 последних активных юзеров для удобного бана
 const recentActiveUsers = []; 
 const noraTriggerForms = '(?:нора|норы|норе|нору|норой|норою)';
@@ -18,14 +20,6 @@ const noraStatsRegex = new RegExp(`^${noraTriggerForms}\\W+(?:стата|ста�
 // === ГЕНЕРАТОР ОТМАЗОК СЫЧА ===
 function getSychErrorReply(errText) {
   return responses.getErrorReply(errText);
-}
-
-function addToHistory(chatId, sender, text) {
-  if (!chatHistory[chatId]) chatHistory[chatId] = [];
-  chatHistory[chatId].push({ role: sender, text: text });
-  if (chatHistory[chatId].length > config.contextSize) {
-    chatHistory[chatId].shift();
-  }
 }
 
 function getBaseOptions(threadId) {
@@ -62,46 +56,6 @@ async function processBuffer(chatId) {
         console.log(`[OBSERVER] Обновлено профилей: ${Object.keys(updates).length}`);
     }
     analysisBuffers[chatId] = [];
-}
-
-// Анализ профиля чата (каждые 50 сообщений)
-async function processChatBuffer(chatId) {
-    const buffer = chatAnalysisBuffers[chatId];
-    if (!buffer || buffer.length === 0) return;
-
-    const currentProfile = storage.getChatProfile(chatId);
-    const updates = await ai.analyzeChatProfile(buffer, currentProfile);
-
-    if (updates) {
-        storage.updateChatProfile(chatId, updates);
-        console.log(`[CHAT PROFILE] Обновлен профиль чата ${chatId}`);
-    }
-    chatAnalysisBuffers[chatId] = [];
-}
-
-// Инициализация профиля чата (для новых чатов или при пустом профиле)
-async function initChatProfile(bot, chatId) {
-    try {
-        // Пытаемся получить последние 50 сообщений из истории
-        // (используем chatHistory если есть, или начинаем с нуля)
-        const history = chatHistory[chatId] || [];
-
-        if (history.length >= 10) {
-            // Если есть хотя бы 10 сообщений — анализируем
-            const messages = history.slice(-50).map(m => ({ name: m.role, text: m.text }));
-            const currentProfile = storage.getChatProfile(chatId);
-            const updates = await ai.analyzeChatProfile(messages, currentProfile);
-
-            if (updates) {
-                storage.updateChatProfile(chatId, updates);
-                console.log(`[CHAT PROFILE INIT] Инициализирован профиль чата ${chatId}: "${updates.topic}"`);
-            }
-        } else {
-            console.log(`[CHAT PROFILE INIT] Недостаточно сообщений для анализа чата ${chatId}, ждём накопления`);
-        }
-    } catch (e) {
-        console.error(`[CHAT PROFILE INIT ERROR] ${e.message}`);
-    }
 }
 
 async function processMessage(bot, msg) {
@@ -262,17 +216,9 @@ async function processMessage(bot, msg) {
   if (!text.startsWith('/')) {
       // Пишем в буфер для анализа профилей юзеров
       analysisBuffers[chatId].push({ userId, name: displayName, text });
-
-      // Пишем в буфер для анализа профиля чата
-      if (!chatAnalysisBuffers[chatId]) chatAnalysisBuffers[chatId] = [];
-      chatAnalysisBuffers[chatId].push({ name: displayName, text });
   }
   if (analysisBuffers[chatId].length >= BUFFER_SIZE) {
       processBuffer(chatId);
-  }
-  // Анализ профиля чата каждые 50 сообщений
-  if (chatAnalysisBuffers[chatId] && chatAnalysisBuffers[chatId].length >= CHAT_BUFFER_SIZE) {
-      processChatBuffer(chatId);
   }
 
   const isMuted = storage.isTopicMuted(chatId, threadId);
@@ -345,8 +291,7 @@ async function processMessage(bot, msg) {
     return bot.sendMessage(chatId, nowMuted ? responses.commands.muteOn : responses.commands.muteOff, getBaseOptions(threadId));
   }
   if (command === '/reset') {
-    chatHistory[chatId] = [];
-    analysisBuffers[chatId] = [];
+    conversationMemory.reset(chatId, threadId, userId);
     return bot.sendMessage(chatId, responses.commands.resetDone, getBaseOptions(threadId));
   }
 
@@ -370,7 +315,10 @@ async function processMessage(bot, msg) {
     startTyping(); 
   }
 
-  addToHistory(chatId, senderName, text);
+  // Диалоговая память принадлежит конкретному человеку внутри конкретного топика.
+  // Текущее сообщение передаётся модели отдельно, поэтому в history кладём только прошлое.
+  const conversationHistory = conversationMemory.get(chatId, threadId, userId);
+  conversationMemory.add(chatId, threadId, userId, senderName, text);
 
   // === СТАТИСТИКА ===
   if (noraStatsRegex.test(cleanText.trim())) {
@@ -388,6 +336,7 @@ async function processMessage(bot, msg) {
             startTyping();
             const description = await ai.generateProfileDescription(targetProfile, targetName);
             stopTyping();
+            conversationMemory.add(chatId, threadId, userId, responses.identity.botName, description);
             try { return await bot.sendMessage(chatId, description, getReplyOptions(msg)); } catch(e){}
         }
     }
@@ -401,8 +350,11 @@ async function processMessage(bot, msg) {
   // === ЛОГИКА РЕАКЦИЙ (15%) ===
   if (!shouldAnswer && text.length > 10 && !isReplyToBot && Math.random() < 0.015) {
       
-    // Берем контекст (последние 10 сообщений), чтобы реакция была в тему
-    const historyBlock = chatHistory[chatId].slice(-15).map(m => `${m.role}: ${m.text}`).join('\n');
+    // Реакция учитывает только сообщения этого пользователя в текущем топике.
+    const historyBlock = conversationMemory.get(chatId, threadId, userId)
+        .slice(-15)
+        .map(m => `${m.role}: ${m.text}`)
+        .join('\n');
     
     // Передаем истории вместе с текущим текстом
     ai.determineReaction(historyBlock + responses.features.reactionContext(text)).then(async (emoji) => {
@@ -541,28 +493,18 @@ async function processMessage(bot, msg) {
 
     let aiResponse = "";
 
-    // Получаем профиль чата для контекста
-    let chatProfile = storage.getChatProfile(chatId);
-
-    // Если профиль чата пустой и есть достаточно истории — пробуем инициализировать
-    if (!chatProfile.topic && chatHistory[chatId] && chatHistory[chatId].length >= 10) {
-        console.log(`[CHAT PROFILE] Профиль пуст, запускаю инициализацию для ${chatId}`);
-        initChatProfile(bot, chatId); // Асинхронно, не блокируем ответ
-    }
-
     try {
     // Вытаскиваем текст реплая для контекста
     const replyText = msg.reply_to_message ? (msg.reply_to_message.text || msg.reply_to_message.caption || "") : "";
 
     aiResponse = await ai.getResponse(
-        chatHistory[chatId],
+        conversationHistory,
         { sender: senderName, text: text, replyText: replyText },
         imageBuffer,
         mimeType,
         instruction,
         userProfile,
-        !isDirectlyCalled,
-        chatProfile // <--- Передаём профиль чата
+        !isDirectlyCalled
     );
 
     console.log(`[DEBUG] 2. Ответ от AI получен! Длина: ${aiResponse ? aiResponse.length : "PUSTO"}`);
@@ -640,7 +582,7 @@ async function processMessage(bot, msg) {
 
         stopTyping(); // <-- Всё, сообщение ушло, выключаем статус
         
-        addToHistory(chatId, responses.identity.botName, aiResponse);
+        conversationMemory.add(chatId, threadId, userId, responses.identity.botName, aiResponse);
 
     } catch (error) {
         stopTyping(); // <-- Если ошибка, ОБЯЗАТЕЛЬНО выключаем
@@ -656,12 +598,15 @@ async function processMessage(bot, msg) {
              for (const chunk of rawChunks) {
                 await bot.sendMessage(chatId, chunk, { reply_to_message_id: msg.message_id });
              }
-             addToHistory(chatId, responses.identity.botName, aiResponse);
+             conversationMemory.add(chatId, threadId, userId, responses.identity.botName, aiResponse);
         } catch (e2) { console.error("FATAL SEND ERROR (Даже аварийная не ушла):", e2.message); }
     }
 
     // Рефлекс (Анализ стиля общения и репутации)
-    const contextForAnalysis = chatHistory[chatId].slice(-5).map(m => `${m.role}: ${m.text}`).join('\n');
+    const contextForAnalysis = conversationMemory.get(chatId, threadId, userId)
+        .slice(-5)
+        .map(m => `${m.role}: ${m.text}`)
+        .join('\n');
     
     // Запускаем анализ
     ai.analyzeUserImmediate(contextForAnalysis, userProfile).then(updated => {

@@ -23,7 +23,7 @@ pm2 start src/index.js --name "sych-bot"
 pm2 restart sych-bot
 ```
 
-Auto-deployment triggers on push to `main` via GitHub Actions (`.github/workflows/deploy.yml`).
+Legacy GitHub Actions deployment is disabled. Production is deployed manually to `/home/phil/nora-bot` and restarted through the `nora-bot` PM2 process.
 
 ## Development Workflow
 
@@ -37,7 +37,7 @@ Auto-deployment triggers on push to `main` via GitHub Actions (`.github/workflow
    git commit -m "описание изменений"
    git push origin main
    ```
-5. GitHub Actions автоматически деплоит на сервер — бот пересобирается для тестирования
+5. Развернуть архив коммита на сервере, установить production-зависимости и перезапустить `nora-bot` через PM2 с `--update-env`
 
 ## Architecture
 
@@ -49,18 +49,17 @@ src/
 ├── config.js          # Environment config, API keys, model selection
 ├── core/
 │   ├── logic.js       # Main message handler and decision logic
-│   └── prompts.js     # System prompts and bot personality
+│   └── personality.js # System prompts, bot personality and static responses
 ├── services/
 │   ├── ai.js          # Multi-provider AI service with fallback chain
+│   ├── conversationMemory.js # Expiring per-user/per-topic dialogue context
 │   └── storage.js     # JSON file-based persistence (debounced saves)
-└── utils/
-    └── helpers.js     # Utility functions
 ```
 
 ### Data Storage (`/data` directory)
 - `db.json` - Chats and banned users
 - `profiles.json` - User profiles (reputation, traits, interests)
-- `chatProfiles.json` - Factual chat profiles (topic and facts)
+- `chatProfiles.json` - Legacy chat-profile data; it is not injected into replies
 - `instructions.json` - User-specific instructions
 
 ### Message Processing Flow
@@ -110,6 +109,8 @@ GOOGLE_GEMINI_API_KEY  # Required for fallback
 GOOGLE_GEMINI_API_KEY_2 # Optional additional keys for rotation
 GOOGLE_NATIVE_MODEL    # Native Gemini model ID
 GOOGLE_FALLBACK_MODEL  # Gemini fallback model ID
+CONTEXT_MAX_MESSAGES   # Maximum messages in one temporary dialogue (default 20)
+CONTEXT_TTL_MINUTES    # Lifetime of each dialogue message (default 30 minutes)
 ```
 
 See `.env.example` for full configuration template.
@@ -130,30 +131,26 @@ See `.env.example` for full configuration template.
 - Конфликты с другими пользователями НЕ влияют на репутацию
 - Валидация в коде: `storage.js` → `_applyProfileUpdates()`
 
-## Chat Profile System (Chat Context)
+## Temporary Dialogue Context
 
-Бот запоминает информацию о чатах в `chatProfiles.json`.
+Контекст ответа хранится только в памяти процесса и разделён ключом `chatId + threadId + userId`.
 
-**Поля профиля чата:** `topic`, `facts`, `lastUpdated`
-
-**Механизмы обновления:**
-- **Batch**: каждые 50 сообщений анализирует тему и факты чата
-- **Инициализация**: при пустом профиле и наличии 10+ сообщений в истории
-
-**Лимиты:**
-- `topic`: до 200 символов (1-2 предложения)
-- `facts`: до 500 символов (накопленные факты)
-
-**Использование:** контекст чата передаётся в каждый запрос AI (~100 токенов).
+- Сообщения другого пользователя никогда не попадают в диалог текущего собеседника.
+- Один пользователь имеет независимый контекст в каждом Telegram-топике.
+- По умолчанию сохраняются последние 20 реплик, каждая живёт 30 минут.
+- Старые сообщения удаляются постепенно по собственному времени создания.
+- `/reset` очищает только диалог вызвавшего пользователя в текущем топике.
+- Общий профиль чата больше не передаётся в основной промпт и поисковый маршрутизатор.
+- Перезапуск PM2 полностью очищает временный контекст.
 
 ## Design Decisions
 
 - **Admin-only groups**: Bot auto-leaves groups where admin isn't a member
 - **No database**: JSON file persistence with 5-second debounced saves
 - **Graceful shutdown**: SIGINT handler saves all data before exit
-- **History limit**: Keeps last 30 messages per chat
+- **History isolation**: Keeps up to 20 expiring messages per chat/topic/user by default
 - **Profile updates queue**: Prevents race condition between Batch and Immediate
-- **Bot trigger pattern**: `/(?<![а-яёa-z])(сыч|sych)(?![а-яёa-z])/i`
+- **Bot trigger pattern**: Russian name «Нора» and its grammatical forms
 - **Timezone**: Yekaterinburg UTC+5 for time-aware responses
 
 ## Bot Commands (in-chat)
@@ -161,5 +158,5 @@ See `.env.example` for full configuration template.
 - `/start` - Bot info
 - `/ban [username]` - Ban user (admin only)
 - `/unban [ID]` - Restore user (admin only)
-- `Сыч кто я?` - Show user profile
-- `Сыч стата` - Show token usage statistics
+- `Нора кто я?` - Show user profile
+- `Нора стата` - Show token usage statistics
