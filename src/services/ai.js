@@ -6,6 +6,7 @@ const axios = require('axios');
 const OpenAI = require('openai');
 const { tavily } = require('@tavily/core'); // Р С™Р В»Р С‘Р ВµР Р…РЎвЂљ Tavily
 const storage = require('./storage');
+const loreMemory = require('./loreMemory');
 
 class AiService {
   constructor() {
@@ -31,6 +32,7 @@ class AiService {
     this.usingFallback = false;
     this.nativeModel = null;
     this.nativeSearchModel = null;
+    this.nativePromptDate = null;
     this.bot = null;
 
     // === Р РЋР СћР С’Р СћР ВР РЋР СћР ВР С™Р С’ (РЎвЂљР ВµР С—Р ВµРЎР‚РЎРЉ Р С—Р ВµРЎР‚РЎРѓР С‘РЎРѓРЎвЂљР ВµР Р…РЎвЂљР Р…Р В°РЎРЏ РЎвЂЎР ВµРЎР‚Р ВµР В· storage) ===
@@ -105,6 +107,7 @@ class AiService {
         systemInstruction: prompts.system(),
         safetySettings: safetySettings
     });
+    this.nativePromptDate = this.getEkaterinburgDateKey();
 
     this.nativeSearchModel = genAI.getGenerativeModel({
         model: config.googleNativeModel,
@@ -165,6 +168,23 @@ class AiService {
     });
     // Р Р‡Р Р†Р Р…Р С• РЎС“Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµР С Р В±Р В°Р В·РЎС“ Р Т‘Р В»РЎРЏ РЎР‚Р В°РЎРѓРЎвЂЎР ВµРЎвЂљР С•Р Р†
     return `${time} (UTC+5)`;
+  }
+
+  getEkaterinburgDateKey() {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Yekaterinburg',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  ensureNativePromptIsCurrent() {
+    if (this.nativeModel && this.nativePromptDate !== this.getEkaterinburgDateKey()) {
+      this.initNativeModel();
+    }
   }
 
 // === Р Р€Р СњР ВР вЂ™Р вЂўР В Р РЋР С’Р вЂєР В¬Р СњР В«Р в„ў Р СџР С›Р ВР РЋР С™ ===
@@ -256,9 +276,17 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
 
   // 1. AI Р С›Р СџР В Р вЂўР вЂќР вЂўР вЂєР Р‡Р вЂўР Сћ Р СњР Р€Р вЂ“Р вЂўР Сњ Р вЂєР В Р СџР С›Р ВР РЋР С™
   const recentHistory = history.slice(-5).map(m => `${m.role}: ${m.text}`).join('\n');
+  const loreQuery = [currentMessage.text, currentMessage.replyText, recentHistory].filter(Boolean).join('\n');
+  const relevantLore = loreMemory.findRelevant(loreQuery);
+  const loreContext = loreMemory.formatMemories(relevantLore);
+  const matchedLoreTitles = relevantLore.map(memory => memory.title).join(', ');
+  if (relevantLore.length > 0) {
+      console.log(`[LORE] matched=${relevantLore.map(memory => memory.id).join(',')}`);
+  }
   const searchDecision = await this.checkSearchNeeded(
       currentMessage.text,
-      recentHistory
+      recentHistory,
+      matchedLoreTitles
   );
 
   let searchResultText = "";
@@ -310,6 +338,9 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
       userMessage: currentMessage.text,
       replyContext: replyContext,
       history: contextStr,
+      loreMemories: loreContext,
+      isInterviewer: String(currentMessage.userId) === String(config.interviewerUserId),
+      isConversationStart: !history.some(message => message.role === responses.identity.botName),
       personalInfo: personalInfo,
       senderName: currentMessage.sender
   });
@@ -364,8 +395,12 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
 
 // Helper Р Т‘Р В»РЎРЏ Native Р Р†РЎвЂ№Р В·Р С•Р Р†Р В° (РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р Р…Р Вµ Р Т‘РЎС“Р В±Р В»Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С”Р С•Р Т‘)
 async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous) {
+    this.ensureNativePromptIsCurrent();
     const relevantHistory = history.slice(-20);
     const contextStr = relevantHistory.map(m => `${m.role}: ${m.text}`).join('\n');
+    const loreQuery = [currentMessage.text, currentMessage.replyText, contextStr].filter(Boolean).join('\n');
+    const relevantLore = loreMemory.findRelevant(loreQuery);
+    const loreContext = loreMemory.formatMemories(relevantLore);
 
     // Р РЋР С•Р В±Р С‘РЎР‚Р В°Р ВµР С Р С—Р С•Р В»Р Р…РЎС“РЎР‹ Р С‘Р Р…РЎвЂћР С•РЎР‚Р СР В°РЎвЂ Р С‘РЎР‹ Р С• Р С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»Р Вµ (Р С”Р В°Р С” Р Р† Р С•РЎРѓР Р…Р С•Р Р†Р Р…Р С•Р С Р СР ВµРЎвЂљР С•Р Т‘Р Вµ)
     let personalInfo = "";
@@ -388,6 +423,9 @@ async generateViaNative(history, currentMessage, imageBuffer, mimeType, userInst
         userMessage: currentMessage.text,
         replyContext: replyContext,
         history: contextStr,
+        loreMemories: loreContext,
+        isInterviewer: String(currentMessage.userId) === String(config.interviewerUserId),
+        isConversationStart: !history.some(message => message.role === responses.identity.botName),
         personalInfo: personalInfo,
         senderName: currentMessage.sender
     });
@@ -461,14 +499,15 @@ async analyzeUserImmediate(lastMessages, currentProfile) {
 }
 
 // Р С›Р С—РЎР‚Р ВµР Т‘Р ВµР В»Р ВµР Р…Р С‘Р Вµ Р Р…Р ВµР С•Р В±РЎвЂ¦Р С•Р Т‘Р С‘Р СР С•РЎРѓРЎвЂљР С‘ Р С—Р С•Р С‘РЎРѓР С”Р В° (AI-РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ Р Р†Р СР ВµРЎРѓРЎвЂљР С• regex)
-async checkSearchNeeded(userMessage, recentHistory) {
+async checkSearchNeeded(userMessage, recentHistory, matchedLoreTitles = '') {
     const fallback = { needsSearch: false, searchQuery: null, reason: responses.ai.searchFallbackReason };
 
     try {
         const prompt = prompts.shouldSearch(
             this.getCurrentTime(),
             userMessage,
-            recentHistory
+            recentHistory,
+            matchedLoreTitles
         );
         const result = await this.runLogicModel(prompt);
         if (!result || typeof result !== 'object' || typeof result.needsSearch !== 'boolean') return fallback;

@@ -37,6 +37,7 @@ module.exports = {
   version: packageInfo.version,
   botId: parseInt(process.env.TELEGRAM_BOT_TOKEN.split(':')[0], 10),
   adminId: parseInt(process.env.ADMIN_USER_ID, 10),
+  interviewerUserId: parseInt(process.env.NORA_INTERVIEWER_USER_ID || process.env.ADMIN_USER_ID, 10),
   
   // === ОСНОВНОЙ OPENAI-CОВМЕСТИМЫЙ API ===
   aiBaseUrl,

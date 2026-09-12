@@ -499,7 +499,7 @@ async function processMessage(bot, msg) {
 
     aiResponse = await ai.getResponse(
         conversationHistory,
-        { sender: senderName, text: text, replyText: replyText },
+        { sender: senderName, userId: userId, text: text, replyText: replyText },
         imageBuffer,
         mimeType,
         instruction,

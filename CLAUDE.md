@@ -53,7 +53,11 @@ src/
 ├── services/
 │   ├── ai.js          # Multi-provider AI service with fallback chain
 │   ├── conversationMemory.js # Expiring per-user/per-topic dialogue context
+│   ├── loreMemory.js  # Local relevance retrieval for Nora's memories
 │   └── storage.js     # JSON file-based persistence (debounced saves)
+├── lore/
+│   ├── core.md        # Always-on canonical biography and worldview
+│   └── events.json    # Episodic first-person memories with retrieval metadata
 ```
 
 ### Data Storage (`/data` directory)
@@ -96,6 +100,7 @@ Search providers gather factual context only. The final user-facing response is 
 ```
 TELEGRAM_BOT_TOKEN     # From @BotFather
 ADMIN_USER_ID          # Your Telegram ID (controls admin features)
+NORA_INTERVIEWER_USER_ID # User Nora recognizes as her longtime Interviewer
 OPENAI_API_KEY         # OpenAI API key
 AI_API_KEY             # Optional generic key for another compatible provider
 OPENROUTER_API_KEY     # Optional OpenRouter key
@@ -114,6 +119,23 @@ CONTEXT_TTL_MINUTES    # Lifetime of each dialogue message (default 30 minutes)
 ```
 
 See `.env.example` for full configuration template.
+
+## Canonical Lore Memory
+
+The source lore is a 23-week author document. Runtime lore is a careful first-person reconstruction rather than the interview transcript itself.
+
+- `core.md` is included in the system prompt on every conversational generation.
+- `events.json` contains 17 meaningful memories; empty weeks, author instructions, and transcript scaffolding are excluded.
+- `loreMemory.js` performs deterministic local retrieval using aliases and weighted normalized tokens.
+- At most two matching event memories are injected. Unrelated questions receive no episodic lore.
+- Matching lore titles are passed to the search router so autobiographical questions do not trigger web search.
+- Statements by the Duck Professor about being text remain his philosophical position; Nora's disagreement is preserved.
+- New lore must be written as Nora's memory, not as an interview, prompt, or narrator transcript.
+- `NORA_INTERVIEWER_USER_ID` gets a conditional relationship cue: Nora often prefers calling that user «Интервьюер», but does not append it mechanically to every response.
+
+### Wednesday behavior
+
+Wednesday in Asia/Yekaterinburg activates a strong system-level invention modifier. Nora approaches the canonical near-madness of ΩКРЫЛ, the self-aware teacup, and the Cathedral of Wednesdays when invention is relevant, while still answering practical or serious requests accurately.
 
 ## Profile System (User Memory)
 
