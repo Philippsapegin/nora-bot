@@ -85,10 +85,12 @@ GOOGLE_FALLBACK_MODEL=gemini-2.5-flash-lite
 Опционально для поиска:
 
 ```ini
-SEARCH_PROVIDER=tavily
-TAVILY_API_KEY=tvly-...
+SEARCH_PROVIDER=google
+# TAVILY_API_KEY=tvly-...
 PERPLEXITY_MODEL=perplexity/sonar
 ```
+
+Google/Tavily/Perplexity только добывают факты. Финальную реплику с характером Норы всегда формирует основная модель.
 
 Запуск:
 

@@ -51,9 +51,9 @@ module.exports = {
   // Варианты: 
   // 'tavily'     -> Использует Tavily API (RAG). Лучший вариант для сторонних моделей.
   // 'perplexity' -> Использует модель Sonar через OpenRouter (RAG).
-  // 'google'     -> Переключается на нативный Google API с встроенным поиском (Tools).
-  // Если в .env не задано, по умолчанию используем 'tavily'
-  searchProvider: process.env.SEARCH_PROVIDER || 'tavily',  
+  // 'google'     -> Получает факты через Google Search, затем передаёт их основной модели.
+  // Если в .env не задано, по умолчанию используем нативный поиск Google.
+  searchProvider: process.env.SEARCH_PROVIDER || 'google',
   
   // Настройки провайдеров
   tavilyKey: process.env.TAVILY_API_KEY,

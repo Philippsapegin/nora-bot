@@ -29,6 +29,8 @@ class AiService {
     this.keyIndex = 0;
     this.keys = config.geminiKeys;
     this.usingFallback = false;
+    this.nativeModel = null;
+    this.nativeSearchModel = null;
     this.bot = null;
 
     // === Р РЋР СћР С’Р СћР ВР РЋР СћР ВР С™Р С’ (РЎвЂљР ВµР С—Р ВµРЎР‚РЎРЉ Р С—Р ВµРЎР‚РЎРѓР С‘РЎРѓРЎвЂљР ВµР Р…РЎвЂљР Р…Р В°РЎРЏ РЎвЂЎР ВµРЎР‚Р ВµР В· storage) ===
@@ -79,7 +81,11 @@ class AiService {
   }
 
   initNativeModel() {
-    if (this.keys.length === 0) return;
+    if (this.keys.length === 0) {
+      this.nativeModel = null;
+      this.nativeSearchModel = null;
+      return;
+    }
     const currentKey = this.keys[this.keyIndex];
     const genAI = new GoogleGenerativeAI(currentKey);
     
@@ -94,12 +100,16 @@ class AiService {
     const modelName = this.usingFallback ? config.fallbackModelName : config.googleNativeModel;
     console.log(`[AI INIT] Native Key #${this.keyIndex + 1} | Model: ${modelName}`);
 
-    this.nativeModel = genAI.getGenerativeModel({ 
+    this.nativeModel = genAI.getGenerativeModel({
         model: modelName,
         systemInstruction: prompts.system(),
+        safetySettings: safetySettings
+    });
+
+    this.nativeSearchModel = genAI.getGenerativeModel({
+        model: config.googleNativeModel,
         safetySettings: safetySettings,
-        // Р вЂ™Р С”Р В»РЎР‹РЎвЂЎР В°Р ВµР С Р Р…Р В°РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р в„– Р С—Р С•Р С‘РЎРѓР С” Google (Tools)
-        tools: [{ googleSearch: {} }] 
+        tools: [{ googleSearch: {} }]
     });
   }
 
@@ -118,15 +128,21 @@ class AiService {
   }
 
   async executeNativeWithRetry(apiCallFn) {
-    const maxAttempts = this.keys.length * 2;
+    if (this.keys.length === 0) throw new Error("Google Native fallback is not configured.");
+    const maxAttempts = this.keys.length;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
             storage.incrementGoogleStat(this.keyIndex);
             return await apiCallFn();
         } catch (error) {
-            const isQuotaError = error.message.includes('429') || error.message.includes('Quota') || error.message.includes('403');
-            if (isQuotaError) {
+            const message = String(error.message || error);
+            const isRetryableKeyError = message.includes('429')
+                || message.includes('Quota')
+                || message.includes('403')
+                || message.includes('API_KEY_INVALID')
+                || message.includes('API key not valid');
+            if (isRetryableKeyError) {
                 this.rotateNativeKey();
                 continue;
             } else {
@@ -197,8 +213,40 @@ async performSearch(query) {
           return null;
       }
   }
+
+  if (config.searchProvider === 'google') {
+      return this.performGoogleSearch(query);
+  }
   
   return null;
+}
+
+async performGoogleSearch(query) {
+  if (!this.nativeSearchModel) return null;
+
+  try {
+      console.log(`[SEARCH] Google query: ${query}`);
+      const result = await this.executeNativeWithRetry(() => this.nativeSearchModel.generateContent({
+          contents: [{
+              role: 'user',
+              parts: [{ text: responses.ai.googleSearchPrompt(this.getCurrentTime(), query) }]
+          }]
+      }));
+
+      let text = result.response.text();
+      const groundingChunks = result.response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      const links = groundingChunks
+          .filter(chunk => chunk.web?.uri)
+          .map(chunk => `[${chunk.web.title || responses.ai.sourceLinkTitle}](${chunk.web.uri})`);
+      const uniqueLinks = [...new Set(links)].slice(0, 5);
+      if (uniqueLinks.length > 0) text += responses.ai.sourceLinksPrefix + uniqueLinks.join(responses.ai.sourceLinksJoiner);
+
+      storage.incrementStat('search');
+      return text;
+  } catch (error) {
+      console.error(`[GOOGLE SEARCH FAIL] ${error.message}`);
+      return null;
+  }
 }
   
 // === Р С›Р РЋР СњР С›Р вЂ™Р СњР С›Р в„ў Р С›Р СћР вЂ™Р вЂўР Сћ ===
@@ -215,19 +263,23 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   );
 
   let searchResultText = "";
+  let searchProviderUsed = null;
+  let searchUnavailable = false;
 
   if (searchDecision.needsSearch && searchDecision.searchQuery) {
       // 2. Р СџР С›Р ВР РЋР С™ Р В§Р вЂўР В Р вЂўР вЂ” TAVILY / PERPLEXITY
-      if (config.searchProvider !== 'google') {
-          searchResultText = await this.performSearch(searchDecision.searchQuery);
-      }
+      searchResultText = await this.performSearch(searchDecision.searchQuery);
+      if (searchResultText) searchProviderUsed = config.searchProvider;
 
       // 3. FALLBACK Р СњР С’ GOOGLE NATIVE SEARCH
       // Р вЂўРЎРѓР В»Р С‘ Tavily/Perplexity Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р… Р С‘Р В»Р С‘ Р С—РЎР‚Р С•Р Р†Р В°Р в„–Р Т‘Р ВµРЎР‚ = google
-      if (!searchResultText && this.keys.length > 0) {
-          console.log(`[ROUTER] Switching to Google Native Search.`);
-          return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
+      if (!searchResultText && config.searchProvider !== 'google' && this.nativeSearchModel) {
+          console.log(`[SEARCH] ${config.searchProvider} unavailable, trying Google Search.`);
+          searchResultText = await this.performGoogleSearch(searchDecision.searchQuery);
+          if (searchResultText) searchProviderUsed = 'google';
       }
+
+      searchUnavailable = !searchResultText;
   }
 
   // 2. Р РЋР вЂР С›Р В Р С™Р С’ Р СџР В Р С›Р СљР СџР СћР С’
@@ -240,7 +292,9 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   if (userInstruction) personalInfo += responses.ai.specialInstruction(userInstruction);
   
   if (searchResultText) {
-      personalInfo += responses.ai.searchData(config.searchProvider, searchResultText);
+      personalInfo += responses.ai.searchData(searchProviderUsed || config.searchProvider, searchResultText);
+  } else if (searchUnavailable) {
+      personalInfo += responses.ai.searchUnavailable;
   }
 
   if (userProfile) {
@@ -263,6 +317,7 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
   });
 
   // 3. Р вЂ”Р С’Р СџР В Р С›Р РЋ Р С™ SMART Р СљР С›Р вЂќР вЂўР вЂєР В (API)
+  let primaryError = null;
   if (this.openai) {
       try {
           const messages = [{ role: "system", content: prompts.system() }, { role: "user", content: [] }];
@@ -288,15 +343,25 @@ async getResponse(history, currentMessage, imageBuffer = null, mimeType = "image
 
           const completion = await this.openai.chat.completions.create(request);
           
-          storage.incrementStat('smart'); 
+          storage.incrementStat('smart');
+          console.log(`[AI SMART] model=${completion.model || config.mainModel}`);
           return completion.choices[0].message.content.replace(/^thought[\s\S]*?\n\n/i, ''); 
       } catch (e) {
           console.error(`[API SMART FAIL] ${e.message}. Fallback to Native...`);
+          primaryError = e;
       }
   }
 
-  // 4. FALLBACK (Р вЂўРЎРѓР В»Р С‘ API РЎС“Р С—Р В°Р В» Р С‘Р В»Р С‘ Р С”Р В»РЎР‹РЎвЂЎР В° Р Р…Р ВµРЎвЂљ)
-  return this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
+  if (this.nativeModel) {
+      try {
+          return await this.generateViaNative(history, currentMessage, imageBuffer, mimeType, userInstruction, userProfile, isSpontaneous, chatProfile);
+      } catch (nativeError) {
+          console.error(`[NATIVE FALLBACK FAIL] ${nativeError.message}`);
+          if (!primaryError) primaryError = nativeError;
+      }
+  }
+
+  throw primaryError || new Error("No AI provider is available.");
 }
 
 // Helper Р Т‘Р В»РЎРЏ Native Р Р†РЎвЂ№Р В·Р С•Р Р†Р В° (РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р Р…Р Вµ Р Т‘РЎС“Р В±Р В»Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С”Р С•Р Т‘)
