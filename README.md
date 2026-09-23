@@ -1,10 +1,11 @@
 # Nora Bot (Нора)
 
-Nora Bot - Telegram-бот с характером, памятью и гибридной AI-архитектурой.
+Nora Bot - Telegram-бот с характером, памятью и гибридной AI-архитектурой. Основные ответы генерирует GPT-6 Luna.
 
 ## Что умеет
 
 - Отвечает с временным контекстом, изолированным по чату, топику и собеседнику.
+- Говорит голосом Норы — самостоятельной жабки-девочки, смешной болтушки и изобретательницы, а не нейтрального ассистента.
 - Помнит канонический лор Норы: постоянное биографическое ядро и релевантные воспоминания о событиях.
 - Ведет профили пользователей: факты, отношение, динамика общения.
 - Ищет информацию в интернете (через AI-решение).
@@ -77,8 +78,8 @@ NORA_INTERVIEWER_USER_ID=123456789
 AI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=your_openai_key
 GOOGLE_GEMINI_API_KEY=your_google_key
-AI_MAIN_MODEL=gpt-5.6-luna
-AI_LOGIC_MODEL=gpt-5.6-luna
+AI_MAIN_MODEL=gpt-6-luna
+AI_LOGIC_MODEL=gpt-6-luna
 GOOGLE_NATIVE_MODEL=gemini-2.5-flash-lite
 GOOGLE_FALLBACK_MODEL=gemini-2.5-flash-lite
 CONTEXT_MAX_MESSAGES=20
