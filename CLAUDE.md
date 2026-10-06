@@ -54,6 +54,7 @@ src/
 │   ├── ai.js          # Multi-provider AI service with fallback chain
 │   ├── conversationMemory.js # Expiring per-user/per-topic dialogue context
 │   ├── loreMemory.js  # Local relevance retrieval for Nora's memories
+│   ├── telegramHealth.js # Polling watchdog, bounded requests and admin alerts
 │   └── storage.js     # JSON file-based persistence (debounced saves)
 ├── lore/
 │   ├── core.md        # Always-on canonical biography and worldview
@@ -166,6 +167,16 @@ Wednesday in Asia/Yekaterinburg activates a strong system-level invention modifi
 - Перезапуск PM2 полностью очищает временный контекст.
 
 ## Design Decisions
+
+### Telegram transport health
+
+- Telegram requests use a 45-second socket/connection timeout; long polling waits 10 seconds.
+- `telegramHealth.js` observes successful and failed `getUpdates` completions, including empty replies. Chat silence is not a failure.
+- The watchdog checks every 10 seconds and cancels/restarts stalled polling after 60 seconds, preserving update offsets and in-memory conversations.
+- Consecutive errors for 60 seconds notify the admin; authentication/conflict errors notify immediately. Outage reminders are throttled to five minutes.
+- Alerts use an independent HTTP request with a 10-second deadline, scrub tokens, and retry failed delivery. Recovery is reported after a successful poll.
+- A `[TELEGRAM HEALTH] Polling OK` heartbeat is logged at startup and every five minutes while healthy.
+- Async message-processing errors are caught, logged and reported instead of escaping the event handler.
 
 - **Admin-only groups**: Bot auto-leaves groups where admin isn't a member
 - **No database**: JSON file persistence with 5-second debounced saves

@@ -3,6 +3,7 @@ const config = require('./config');
 const logic = require('./core/logic');
 const { responses } = require('./core/personality');
 const storage = require('./services/storage');
+const { TELEGRAM_OPTIONS, TelegramHealth } = require('./services/telegramHealth');
 
 
 const originalLog = console.log;
@@ -22,7 +23,11 @@ console.error = (...args) => originalError(getTimestamp(), ...args);
 
 
 // Создаем бота
-const bot = new TelegramBot(config.telegramToken, { polling: true });
+const bot = new TelegramBot(config.telegramToken, TELEGRAM_OPTIONS);
+const telegramHealth = new TelegramHealth(bot, {
+  token: config.telegramToken,
+  adminId: config.adminId,
+});
 
 // Передаем бота в AI-сервис для уведомлений
 const ai = require('./services/ai');
@@ -31,14 +36,15 @@ ai.setBot(bot);
 console.log(responses.index.startupLog);
 console.log(`Admin ID: ${config.adminId}`);
 
-// Обработка ошибок поллинга
-bot.on('polling_error', (error) => {
-    console.error(`[POLLING ERROR] ${error.code}: ${error.message}`);
-    // Если ошибка "Conflict: terminated by other getUpdates", значит запущен второй экземпляр
-  });
-
 // Единый вход для всех сообщений
-bot.on('message', async (msg) => {
+bot.on('message', (msg) => {
+  processIncomingMessage(msg).catch(error => {
+    console.error(`[MESSAGE ERROR] ${telegramHealth.safeError(error)}`);
+    telegramHealth.queueNotice(`⚠️ Нора: ошибка обработки сообщения. ${telegramHealth.safeError(error)}`);
+  });
+});
+
+async function processIncomingMessage(msg) {
   // Игнорируем сообщения, старше 2 минут (чтобы не отвечать на старое при рестарте)
   const now = Math.floor(Date.now() / 1000);
   if (msg.date < now - 120) return;
@@ -89,10 +95,14 @@ bot.on('message', async (msg) => {
 
   // Дальше идет обычная логика...
   await logic.processMessage(bot, msg);
-});
+}
+
+// Register handlers before the first polling request can deliver updates.
+telegramHealth.start();
 
 // Сохраняем базу при выходе
 process.on('SIGINT', () => {
+  telegramHealth.stop();
   console.log("Сохранение данных перед выходом...");
   storage.forceSave(); 
   process.exit();
