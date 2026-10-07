@@ -75,6 +75,15 @@ test('persistent overload is bounded and errors cannot disclose project keys', a
   assert.equal(calls.length, 2);
 });
 
+test('a model deadline skips further project attempts and lets the caller fall back', async () => {
+  const { service, calls, exhausted } = setup(async () => {
+    throw Object.assign(new Error('Deadline expired before operation could complete.'), { status: 504 });
+  });
+  await assert.rejects(service.generateContent({ model: 'flash' }), /Deadline/);
+  assert.equal(calls.length, 1);
+  assert.equal(exhausted.length, 0);
+});
+
 test('concurrent replies retain their own attempted key and model', async () => {
   let release;
   const waiting = new Promise(resolve => { release = resolve; });

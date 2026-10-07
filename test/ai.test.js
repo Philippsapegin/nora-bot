@@ -56,6 +56,7 @@ test('Google is primary even when an OpenAI key is retained', async () => {
   assert.equal(calls[0].config.responseMimeType, 'application/json');
   assert.equal(calls[0].config.systemInstruction, undefined);
   assert.equal(calls[1].model, 'gemini-3.8-flash');
+  assert.equal(calls[1].config.httpOptions.timeout, 20000);
   assert.match(calls[1].config.systemInstruction, /жаба-девочка/);
   assert.match(calls[1].config.systemInstruction, /НИКОГДА Не начинай исправление/);
   assert.match(calls[1].contents[0].parts[0].text, /давний Интервьюер/);
@@ -79,6 +80,7 @@ test('fallback keeps the same personality, private dialogue, photo and search fa
   const fallback = calls.find(request => request.model === 'gemini-3.7-flash');
   assert.deepEqual(main.contents, fallback.contents);
   assert.equal(main.config.systemInstruction, fallback.config.systemInstruction);
+  assert.equal(fallback.config.httpOptions.timeout, 30000);
   assert.match(fallback.contents[0].parts[0].text, /Проверенный факт: 42/);
   assert.match(fallback.contents[0].parts[0].text, /https:\/\/example.com\/fact/);
   assert.match(fallback.contents[0].parts[0].text, /Личный контекст/);

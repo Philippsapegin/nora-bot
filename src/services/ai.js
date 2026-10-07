@@ -158,6 +158,7 @@ class AiService {
           contents: [{ role: 'user', parts }],
           config: {
             // Fresh on every call: picks up Wednesday and the local personality.
+            httpOptions: { timeout: index === 0 ? 20000 : 30000 },
             systemInstruction: prompts.system(),
             maxOutputTokens: 4096,
             temperature: 1,
@@ -260,6 +261,7 @@ class AiService {
       model, contents: prompt,
       config: {
         // No Nora persona here: routing and profile analysis are service tasks.
+        httpOptions: { timeout: 30000 },
         ...(json ? { responseMimeType: 'application/json' } : {}),
         maxOutputTokens: json ? 8192 : 256,
         thinkingConfig: thinkingConfigFor(model),

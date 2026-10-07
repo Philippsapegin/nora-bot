@@ -60,7 +60,7 @@ class GeminiService {
         error.message = message;
         // One extra project for temporary overload; do not label it exhausted.
         const status = Number(error.status || error.code);
-        if ([500, 502, 503, 504].includes(status)
+        if ([500, 502, 503, 504].includes(status) && !/deadline|timeout|timed out|aborted/i.test(message)
           && transientRetries++ < 1 && attempt + 1 < this.clients.length) continue;
         const retryable = [429, 403].includes(status)
           || /\b429\b|\b403\b|RESOURCE_EXHAUSTED|quota|API_KEY_INVALID|API key not valid/i.test(message);

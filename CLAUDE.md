@@ -91,7 +91,7 @@ src/
 
 **Default provider**: `AI_PROVIDER=google`. Gemini 3.8 Flash → per-model key rotation across projects → Gemini 3.7 Flash → Admin notification. Service JSON/text tasks use Flash-Lite without Nora's conversational system prompt. All conversational tasks (including profile descriptions) use the current personality and canonical lore. Search results survive fallback unchanged.
 
-The Google GenAI SDK uses bounded 60-second requests and no internal retries; project-key rotation is handled by `gemini.js`. Gemini 3.x Flash uses low thinking, Flash-Lite minimal thinking, and Gemini 2.5 Flash zero thinking budget. Thought parts are never published. The optional `AI_PROVIDER=openai` path is retained; an existing OpenAI key cannot override Google routing.
+The Google GenAI SDK uses no internal retries. Primary conversational requests have a 20-second deadline, fallback and service logic 30 seconds, and search 60 seconds. Model timeouts immediately fall back instead of repeating across projects; temporary HTTP overload gets at most one extra project. Quota/key errors rotate through the key pool independently per model. Gemini 3.x Flash uses low thinking, Flash-Lite minimal thinking, and Gemini 2.5 Flash zero thinking budget. Thought parts are never published. The optional `AI_PROVIDER=openai` path is retained; an existing OpenAI key cannot override Google routing.
 
 ### Search Providers (configurable via `SEARCH_PROVIDER` env var)
 - Google (default; returns search facts to the primary model)
