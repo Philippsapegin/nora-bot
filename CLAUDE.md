@@ -53,6 +53,7 @@ src/
 ├── services/
 │   ├── ai.js          # Multi-provider AI service with fallback chain
 │   ├── gemini.js      # Google GenAI SDK, per-model project-key rotation
+│   ├── aiFailover.js  # Persistent 4-message / 4-hour conversational circuit breaker
 │   ├── conversationMemory.js # Expiring per-user/per-topic dialogue context
 │   ├── loreMemory.js  # Local relevance retrieval for Nora's memories
 │   ├── telegramHealth.js # Polling watchdog, bounded requests and admin alerts
@@ -67,6 +68,7 @@ src/
 - `profiles.json` - User profiles (reputation, traits, interests)
 - `chatProfiles.json` - Legacy chat-profile data; it is not injected into replies
 - `instructions.json` - User-specific instructions
+- `ai-failover.json` - Consecutive fallback count, working reserve and recovery deadline
 
 ### Message Processing Flow
 
@@ -86,10 +88,12 @@ src/
 | Smart Responses | `AI_MAIN_MODEL` | Generate conversational replies |
 | Google Native | `GOOGLE_NATIVE_MODEL` | Gemini fallback for the optional OpenAI provider |
 | Google Search | `GOOGLE_SEARCH_MODEL` | Separate search model, currently Gemini 2.5 Flash-Lite |
-| Fallback | `GOOGLE_FALLBACK_MODEL` | Google Gemini fallback |
+| Fallback | `GOOGLE_FALLBACK_MODELS` | Ordered reserves; legacy `GOOGLE_FALLBACK_MODEL` also supported |
 | Perplexity Search | `PERPLEXITY_MODEL` | Search through OpenRouter |
 
-**Default provider**: `AI_PROVIDER=google`. Gemini 3.7 Flash → per-model key rotation across projects → Gemini 3.6 Flash → Admin notification. Gemini 3.8 Flash is not in the active chain because server smoke tests consistently timed out. Service JSON/text tasks use Flash-Lite without Nora's conversational system prompt. All conversational tasks (including profile descriptions) use the current personality and canonical lore. Search results survive fallback unchanged.
+**Default provider**: `AI_PROVIDER=google`. Gemini 3.7 Flash → per-model key rotation across projects → Gemini 3.5 Flash → Gemini 2.5 Flash. Gemini 3.8/3.6 Flash are not in the active chain. Service JSON/text tasks use Flash-Lite without Nora's conversational system prompt. All conversational tasks (including profile descriptions) use the current personality and canonical lore. Search results survive fallback unchanged.
+
+**Persistent conversational failover**: after four consecutive replies route away from the primary (even if all reserves fail), skip the primary for four hours. A primary text response resets the streak. Count once per conversational reply, globally across chats, excluding service/search/probe calls. In pinned mode try the last working reserve first, then other reserves, never the primary. At expiry one internal 30-second primary probe runs even in an idle chat, without SDK retries or key rotation; usable text restores normal routing, any failure/empty output extends the pin by one hour. Replies continue on reserve during the single-flight probe. Persist the streak, active reserve and deadline atomically in `data/ai-failover.json`; daily stats reset must not clear it. Configuration changes invalidate saved state. Epoch guards stop older concurrent requests from undoing a pin/recovery. Report pin/deadline in stats and notify the admin on transitions. Preserve the author's conversational personality; only help/stats formatting changes for this feature.
 
 The Google GenAI SDK uses no internal retries. Primary conversational requests have a 20-second deadline, fallback and service logic 30 seconds, and search 60 seconds. Model timeouts immediately fall back instead of repeating across projects; temporary HTTP overload gets at most one extra project. Quota/key errors rotate through the key pool independently per model. Gemini 3.x Flash uses low thinking, Flash-Lite minimal thinking, and Gemini 2.5 Flash zero thinking budget. Thought parts are never published. The optional `AI_PROVIDER=openai` path is retained; an existing OpenAI key cannot override Google routing.
 
@@ -120,7 +124,8 @@ GOOGLE_GEMINI_API_KEY  # Required for the Google provider/search/fallback
 GOOGLE_GEMINI_API_KEY_2 # Optional additional keys for rotation
 GOOGLE_NATIVE_MODEL    # Native Gemini model ID
 GOOGLE_SEARCH_MODEL    # Search model; separate from conversational Gemini 3.x
-GOOGLE_FALLBACK_MODEL  # Gemini fallback model ID
+GOOGLE_FALLBACK_MODELS # Comma-separated ordered Gemini conversational reserves
+GOOGLE_FALLBACK_MODEL  # Legacy single reserve, used only without the list
 CONTEXT_MAX_MESSAGES   # Maximum messages in one temporary dialogue (default 20)
 CONTEXT_TTL_MINUTES    # Lifetime of each dialogue message (default 30 minutes)
 ```

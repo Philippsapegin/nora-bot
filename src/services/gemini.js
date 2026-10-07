@@ -37,6 +37,24 @@ class GeminiService {
     this.modelKeyIndices.clear();
   }
 
+  redactError(error) {
+    let message = String(error.message || error);
+    for (const key of this.keys) {
+      if (key) message = message.split(key).join('[REDACTED]');
+    }
+    error.message = message;
+    return error;
+  }
+
+  // Health checks must be ONE request: no project rotation or overload retries.
+  async generateContentOnce(request) {
+    if (!this.clients.length) throw new Error('No Google Gemini keys are configured.');
+    const keyIndex = this.modelKeyIndices.get(request.model) || 0;
+    this.onAttempt(keyIndex, request.model);
+    try { return await this.clients[keyIndex].models.generateContent(request); }
+    catch (error) { throw this.redactError(error); }
+  }
+
   async generateContent(request) {
     if (!this.clients.length) throw new Error('No Google Gemini keys are configured.');
     const startIndex = this.modelKeyIndices.get(request.model) || 0;
@@ -53,11 +71,8 @@ class GeminiService {
         if (currentIndex === startIndex) this.modelKeyIndices.set(request.model, keyIndex);
         return result;
       } catch (error) {
-        let message = String(error.message || error);
-        for (const key of this.keys) {
-          if (key) message = message.split(key).join('[REDACTED]');
-        }
-        error.message = message;
+        this.redactError(error);
+        const message = error.message;
         // One extra project for temporary overload; do not label it exhausted.
         const status = Number(error.status || error.code);
         if ([500, 502, 503, 504].includes(status) && !/deadline|timeout|timed out|aborted/i.test(message)

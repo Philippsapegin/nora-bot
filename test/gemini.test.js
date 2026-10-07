@@ -129,4 +129,30 @@ test('uses supported thinking settings for each model family', () => {
   assert.deepEqual(thinkingConfigFor('gemini-3.7-flash'), { thinkingLevel: 'low' });
   assert.deepEqual(thinkingConfigFor('gemini-3.5-flash-lite'), { thinkingLevel: 'minimal' });
   assert.deepEqual(thinkingConfigFor('gemini-2.5-flash-lite'), { thinkingBudget: 0 });
+  assert.deepEqual(thinkingConfigFor('gemini-2.5-flash'), { thinkingBudget: 0 });
+});
+
+test('internal probe is exactly one request, never rotates or retries on any failure', async () => {
+  for (const status of [429, 403, 503, 504]) {
+    const { service, calls, exhausted, allExhausted } = setup(async key => {
+      throw Object.assign(new Error('failure key=' + key), { status });
+    });
+    service.modelKeyIndices.set('main', 1);
+    await assert.rejects(service.generateContentOnce({ model: 'main' }), error => {
+      assert.doesNotMatch(error.message, /project-one|project-two|project-three/);
+      return error.status === status;
+    });
+    assert.deepEqual(calls, [[1, 'main']]);
+    assert.equal(service.modelKeyIndices.get('main'), 1);
+    assert.equal(exhausted.length, 0);
+    assert.equal(allExhausted.length, 0);
+  }
+});
+
+test('internal probe returns one response and rejects missing keys', async () => {
+  const { service, calls } = setup(async () => ({ text: 'Ква' }));
+  assert.equal(responseText(await service.generateContentOnce({ model: 'main' })), 'Ква');
+  assert.equal(calls.length, 1);
+  const empty = new GeminiService({ keys: [] });
+  await assert.rejects(empty.generateContentOnce({ model: 'main' }), /No Google Gemini keys/);
 });

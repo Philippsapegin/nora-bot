@@ -6,6 +6,8 @@ const { tavily } = require('@tavily/core');
 const storage = require('./storage');
 const loreMemory = require('./loreMemory');
 const { GeminiService, thinkingConfigFor, responseText } = require('./gemini');
+const { AiFailover } = require('./aiFailover');
+const path = require('node:path');
 
 class AiService {
   constructor() {
@@ -36,12 +38,33 @@ class AiService {
       },
       onAllExhausted: model => this.notifyAdmin(model + ': ' + responses.ai.allGoogleKeysExhausted),
     });
+    this.failover = new AiFailover({
+      mainModel: config.aiProvider === 'google' ? config.mainModel : config.googleNativeModel,
+      fallbackModels: config.fallbackModels || [config.fallbackModelName],
+      stateFile: path.resolve(__dirname, '../../data/ai-failover.json'),
+      probe: () => this.probeGooglePrimary(),
+      onEvent: (event, state) => {
+        this.usingFallback = state.pinned;
+        const until = state.fallbackUntil ? new Date(state.fallbackUntil).toISOString() : '-';
+        console.log('[AI FAILOVER] ' + event + ' model=' + state.activeFallbackModel + ' until=' + until);
+        const messages = {
+          pinned: 'Основная Gemini недоступна 4 сообщения подряд. Перехожу на резерв на 4 часа.',
+          extended: 'Основная Gemini ещё не отвечает. Продлеваю резерв на час.',
+          recovered: 'Основная Gemini снова отвечает. Возвращаюсь на неё.',
+        };
+        this.notifyAdmin(messages[event]);
+      },
+    });
+    this.usingFallback = this.failover.pinned;
     console.log('[AI INIT] provider=' + config.aiProvider + ' main=' + config.mainModel
-      + ' logic=' + config.logicModel + ' fallback=' + config.fallbackModelName
-      + ' search=' + config.googleSearchModel + ' keys=' + this.keys.length);
+      + ' logic=' + config.logicModel + ' fallback=' + this.failover.fallbackModels.join(',')
+      + ' search=' + config.googleSearchModel + ' keys=' + this.keys.length
+      + ' reserveUntil=' + (this.failover.pinned ? new Date(this.failover.fallbackUntil).toISOString() : '-'));
   }
 
   setBot(botInstance) { this.bot = botInstance; }
+
+  stop() { this.failover.stop(); }
 
   notifyAdmin(message) {
     if (this.bot && config.adminId) {
@@ -52,15 +75,17 @@ class AiService {
   resetStatsIfNeeded() {
     if (storage.resetStatsIfNeeded()) {
       this.google.resetKeyIndices();
-      this.usingFallback = false;
+      this.usingFallback = this.failover.pinned;
     }
   }
 
   getStatsReport() {
     this.resetStatsIfNeeded();
+    const state = this.failover.status();
     return responses.ai.formatStatsReport({
       ...storage.getFullStats(),
-      usingFallback: this.usingFallback,
+      usingFallback: state.pinned || this.usingFallback,
+      failover: state,
       formatNumber: value => this._formatNumber(value),
     });
   }
@@ -145,20 +170,38 @@ class AiService {
     }
   }
 
+  async probeGooglePrimary() {
+    this.resetStatsIfNeeded();
+    const model = this.failover.mainModel;
+    console.log('[AI FAILOVER] probing main=' + model);
+    const result = await this.google.generateContentOnce({
+      model, contents: 'Ответь одним коротким словом: ква.',
+      config: {
+        httpOptions: { timeout: 30000 },
+        systemInstruction: prompts.system(),
+        maxOutputTokens: 1024,
+        thinkingConfig: thinkingConfigFor(model),
+      },
+    });
+    // No Telegram message, dialogue memory or smart/logic usage for this probe.
+    return responseText(result);
+  }
+
   async generateGoogleReply(fullPromptText, imageBuffer = null, mimeType = 'image/jpeg') {
     const parts = [{ text: fullPromptText }];
     if (imageBuffer) parts.push({ inlineData: { mimeType, data: imageBuffer.toString('base64') } });
-    const mainModel = config.aiProvider === 'google' ? config.mainModel : config.googleNativeModel;
-    const models = [...new Set([mainModel, config.fallbackModelName].filter(Boolean))];
+    const route = this.failover.beginReply();
     let lastError;
-    for (const [index, model] of models.entries()) {
+    for (const model of route.models) {
+      const isMain = !route.direct && model === this.failover.mainModel;
+      if (!isMain) this.failover.routedToFallback(route);
       try {
         const result = await this.google.generateContent({
           model,
           contents: [{ role: 'user', parts }],
           config: {
             // Fresh on every call: picks up Wednesday and the local personality.
-            httpOptions: { timeout: index === 0 ? 20000 : 30000 },
+            httpOptions: { timeout: isMain ? 20000 : 30000 },
             systemInstruction: prompts.system(),
             maxOutputTokens: 4096,
             temperature: 1,
@@ -166,7 +209,9 @@ class AiService {
           },
         });
         const text = responseText(result);
-        this.usingFallback = index > 0;
+        if (isMain) this.failover.primarySucceeded(route);
+        else this.failover.fallbackSucceeded(route, model);
+        this.usingFallback = this.failover.pinned || !isMain;
         storage.incrementStat('smart');
         console.log('[AI SMART] model=' + model + ' fallback=' + this.usingFallback);
         return text;

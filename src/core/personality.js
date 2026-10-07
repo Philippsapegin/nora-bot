@@ -375,6 +375,7 @@ const responses = {
 • Я помню свой дом, друзей, изобретения и последствия прошлых сред. Спрашивай как о моих собственных воспоминаниях.
 
 **⚙️ Настройки:**
+• «Нора стата» — статистика и состояние резервной модели. При сбоях я сама переключаюсь на резерв и проверяю восстановление.
 • /mute — Режим тишины (перестану встревать в разговор сам).
 • /reset — Сброс нашего временного диалога в текущем топике.
         `,
@@ -434,7 +435,7 @@ const responses = {
     sourceLinksJoiner: ' • ',
     searchFallbackReason: 'fallback',
     unknownProfile: 'Не знаю такого.',
-    formatStatsReport({ today, week, month, allTime, usingFallback, formatNumber }) {
+    formatStatsReport({ today, week, month, allTime, usingFallback, failover, formatNumber }) {
       const mode = usingFallback ? '⚠️ FALLBACK' : '⚡ API';
       const dateStr = today.date ? today.date.split('-').reverse().slice(0, 2).join('.') : '--';
       const googleRows = (today.google || []).map((s, i) => `${i + 1}: ${s.status ? '🟢' : '🔴'} ${s.count}`).join('\n');
@@ -442,6 +443,10 @@ const responses = {
       const todaySection = [
         `Сегодня ${dateStr}:`,
         `Режим: ${mode}`,
+        ...(failover?.pinned ? [
+          `Модель резерва: ${failover.activeFallbackModel}`,
+          `Проверка основной: ${new Date(failover.fallbackUntil).toLocaleString('ru-RU', { timeZone: 'Asia/Yekaterinburg' })} (UTC+5)`,
+        ] : []),
         '',
         '• API',
         `Smart: ${today.smart}`,

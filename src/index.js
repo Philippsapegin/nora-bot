@@ -103,6 +103,7 @@ telegramHealth.start();
 // Сохраняем базу при выходе
 process.on('SIGINT', () => {
   telegramHealth.stop();
+  ai.stop();
   console.log("Сохранение данных перед выходом...");
   storage.forceSave(); 
   process.exit();

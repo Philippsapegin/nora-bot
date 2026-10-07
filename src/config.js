@@ -22,7 +22,8 @@ if (aiProvider === 'google' && geminiKeys.length === 0) {
 
 const requiredModelVars = ['AI_MAIN_MODEL', 'AI_LOGIC_MODEL'];
 if (geminiKeys.length > 0) {
-  requiredModelVars.push('GOOGLE_NATIVE_MODEL', 'GOOGLE_FALLBACK_MODEL');
+  requiredModelVars.push('GOOGLE_NATIVE_MODEL');
+  if (!process.env.GOOGLE_FALLBACK_MODELS) requiredModelVars.push('GOOGLE_FALLBACK_MODEL');
 }
 if ((process.env.SEARCH_PROVIDER || 'tavily') === 'perplexity') {
   requiredModelVars.push('PERPLEXITY_MODEL');
@@ -38,6 +39,13 @@ const usesOfficialOpenAI = /^https:\/\/api\.openai\.com(?:\/|$)/i.test(aiBaseUrl
 const aiKey = usesOfficialOpenAI
   ? process.env.OPENAI_API_KEY || process.env.AI_API_KEY
   : process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY;
+// Ordered chain; the old single-model variable remains compatible.
+const fallbackModels = [...new Set((process.env.GOOGLE_FALLBACK_MODELS || process.env.GOOGLE_FALLBACK_MODEL || '')
+  .split(',').map(model => model.trim()).filter(Boolean))];
+if (geminiKeys.length && !fallbackModels.some(model => model !==
+  (aiProvider === 'google' ? process.env.AI_MAIN_MODEL : process.env.GOOGLE_NATIVE_MODEL))) {
+  throw new Error('GOOGLE_FALLBACK_MODELS must include a model different from the primary.');
+}
 
 module.exports = {
   // === TELEGRAM ===
@@ -73,7 +81,8 @@ module.exports = {
   geminiKeys: geminiKeys,
   googleNativeModel: process.env.GOOGLE_NATIVE_MODEL,
   googleSearchModel: process.env.GOOGLE_SEARCH_MODEL || process.env.GOOGLE_NATIVE_MODEL,
-  fallbackModelName: process.env.GOOGLE_FALLBACK_MODEL,
+  fallbackModelName: fallbackModels[0],
+  fallbackModels,
   contextSize: Math.max(2, parseInt(process.env.CONTEXT_MAX_MESSAGES, 10) || 20),
   contextTtlMs: Math.max(1, parseInt(process.env.CONTEXT_TTL_MINUTES, 10) || 30) * 60 * 1000,
   triggerRegex: /(?<![а-яёa-z])(нора|норы|норе|нору|норой|норою)(?![а-яёa-z])/i,
