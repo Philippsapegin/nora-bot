@@ -1,6 +1,6 @@
 # Nora Bot (Нора)
 
-Nora Bot - Telegram-бот с характером и памятью. Основные ответы генерирует Gemini 3.8 Flash, служебную логику выполняет Gemini 3.5 Flash-Lite.
+Nora Bot - Telegram-бот с характером и памятью. Основные ответы генерирует Gemini 3.7 Flash, служебную логику выполняет Gemini 3.5 Flash-Lite.
 
 ## Что умеет
 
@@ -77,10 +77,10 @@ ADMIN_USER_ID=123456789
 NORA_INTERVIEWER_USER_ID=123456789
 AI_PROVIDER=google
 GOOGLE_GEMINI_API_KEY=your_google_key
-AI_MAIN_MODEL=gemini-3.8-flash
+AI_MAIN_MODEL=gemini-3.7-flash
 AI_LOGIC_MODEL=gemini-3.5-flash-lite
-GOOGLE_NATIVE_MODEL=gemini-3.8-flash
-GOOGLE_FALLBACK_MODEL=gemini-3.7-flash
+GOOGLE_NATIVE_MODEL=gemini-3.7-flash
+GOOGLE_FALLBACK_MODEL=gemini-3.6-flash
 GOOGLE_SEARCH_MODEL=gemini-2.5-flash-lite
 CONTEXT_MAX_MESSAGES=20
 CONTEXT_TTL_MINUTES=30

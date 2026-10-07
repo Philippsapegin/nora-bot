@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Nora Bot is a Telegram bot with Gemini 3.8 Flash conversational generation and Gemini 3.5 Flash-Lite service logic. It's a stateful conversational agent with character, memory, and autonomous decision-making capabilities. The bot operates primarily in Russian.
+Nora Bot is a Telegram bot with Gemini 3.7 Flash conversational generation and Gemini 3.5 Flash-Lite service logic. It's a stateful conversational agent with character, memory, and autonomous decision-making capabilities. The bot operates primarily in Russian.
 
 - **Node.js**: 20+ required
 - **Package Type**: CommonJS
@@ -89,7 +89,7 @@ src/
 | Fallback | `GOOGLE_FALLBACK_MODEL` | Google Gemini fallback |
 | Perplexity Search | `PERPLEXITY_MODEL` | Search through OpenRouter |
 
-**Default provider**: `AI_PROVIDER=google`. Gemini 3.8 Flash → per-model key rotation across projects → Gemini 3.7 Flash → Admin notification. Service JSON/text tasks use Flash-Lite without Nora's conversational system prompt. All conversational tasks (including profile descriptions) use the current personality and canonical lore. Search results survive fallback unchanged.
+**Default provider**: `AI_PROVIDER=google`. Gemini 3.7 Flash → per-model key rotation across projects → Gemini 3.6 Flash → Admin notification. Gemini 3.8 Flash is not in the active chain because server smoke tests consistently timed out. Service JSON/text tasks use Flash-Lite without Nora's conversational system prompt. All conversational tasks (including profile descriptions) use the current personality and canonical lore. Search results survive fallback unchanged.
 
 The Google GenAI SDK uses no internal retries. Primary conversational requests have a 20-second deadline, fallback and service logic 30 seconds, and search 60 seconds. Model timeouts immediately fall back instead of repeating across projects; temporary HTTP overload gets at most one extra project. Quota/key errors rotate through the key pool independently per model. Gemini 3.x Flash uses low thinking, Flash-Lite minimal thinking, and Gemini 2.5 Flash zero thinking budget. Thought parts are never published. The optional `AI_PROVIDER=openai` path is retained; an existing OpenAI key cannot override Google routing.
 

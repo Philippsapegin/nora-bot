@@ -46,6 +46,18 @@ function setup(generate, settings = {}) {
 
 const message = { text: 'Привет, Нора!', sender: 'Филипп', userId: 86786370 };
 
+test('selected 3.7 primary falls back only to 3.6, never attempts 3.8', async () => {
+  const { ai, calls } = setup(async request => {
+    if (request.model === 'gemini-3.7-flash') throw new Error('503 temporary');
+    return { text: 'Жабка на месте.' };
+  }, {
+    mainModel: 'gemini-3.7-flash', googleNativeModel: 'gemini-3.7-flash',
+    fallbackModelName: 'gemini-3.6-flash',
+  });
+  assert.equal(await ai.generateGoogleReply('Привет'), 'Жабка на месте.');
+  assert.deepEqual(calls.map(request => request.model), ['gemini-3.7-flash', 'gemini-3.6-flash']);
+});
+
 test('Google is primary even when an OpenAI key is retained', async () => {
   const { ai, calls, stats, openaiClients } = setup(async request => ({ text:
     request.config.responseMimeType ? '{"needsSearch":false,"searchQuery":null}' : 'Я придумала носкоуловитель!',
