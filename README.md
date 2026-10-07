@@ -1,6 +1,6 @@
 # Nora Bot (Нора)
 
-Nora Bot - Telegram-бот с характером, памятью и гибридной AI-архитектурой. Основные ответы генерирует GPT-6 Luna.
+Nora Bot - Telegram-бот с характером и памятью. Основные ответы генерирует Gemini 3.8 Flash, служебную логику выполняет Gemini 3.5 Flash-Lite.
 
 ## Что умеет
 
@@ -59,7 +59,7 @@ Nora Bot - Telegram-бот с характером, памятью и гибри
 
 ## Установка (локально)
 
-Требуется Node.js 18+.
+Требуется Node.js 20+.
 
 ```bash
 git clone https://github.com/Veta-one/sych-bot.git
@@ -75,13 +75,13 @@ npm install
 TELEGRAM_BOT_TOKEN=your_token
 ADMIN_USER_ID=123456789
 NORA_INTERVIEWER_USER_ID=123456789
-AI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_KEY=your_openai_key
+AI_PROVIDER=google
 GOOGLE_GEMINI_API_KEY=your_google_key
-AI_MAIN_MODEL=gpt-6-luna
-AI_LOGIC_MODEL=gpt-6-luna
-GOOGLE_NATIVE_MODEL=gemini-2.5-flash-lite
-GOOGLE_FALLBACK_MODEL=gemini-2.5-flash-lite
+AI_MAIN_MODEL=gemini-3.8-flash
+AI_LOGIC_MODEL=gemini-3.5-flash-lite
+GOOGLE_NATIVE_MODEL=gemini-3.8-flash
+GOOGLE_FALLBACK_MODEL=gemini-3.7-flash
+GOOGLE_SEARCH_MODEL=gemini-2.5-flash-lite
 CONTEXT_MAX_MESSAGES=20
 CONTEXT_TTL_MINUTES=30
 ```
@@ -95,6 +95,12 @@ PERPLEXITY_MODEL=perplexity/sonar
 ```
 
 Google/Tavily/Perplexity только добывают факты. Финальную реплику с характером Норы всегда формирует основная модель.
+
+При `AI_PROVIDER=google` сохранённый ключ OpenAI не используется для ответов или служебной логики. Дополнительные ключи Gemini задаются как `GOOGLE_GEMINI_API_KEY_2`, `_3` и далее без пропусков. Ротация отдельная для каждой модели: исчерпание квоты Lite не расходует запас основной Flash. Ключи разных проектов имеют отдельные квоты; ключи одного проекта делят квоту.
+
+Если основная Flash недоступна после ротации ключей, отвечает полноценная запасная `GOOGLE_FALLBACK_MODEL` с тем же контекстом, результатами поиска и личностью. Веб-поиск остаётся на отдельной `GOOGLE_SEARCH_MODEL`: поиск текстовыми Gemini 3.x в бесплатном API недоступен. Для поиска через Gemini 2.5 нужен проект, которому эта модель ещё доступна.
+
+Используется современный Google GenAI SDK. Основная Flash работает с `thinkingLevel=low`, служебная Lite — с `minimal`; внутренние мысли в чат не отправляются. Для возвращения к OpenAI-совместимому API задайте `AI_PROVIDER=openai`, `AI_BASE_URL`, соответствующий ключ и обе модели в `.env`.
 
 Диалоговая память хранится только в оперативной памяти процесса. Для каждой связки «чат + топик + пользователь» создаётся отдельный контекст: до 20 сообщений, каждое из которых удаляется через 30 минут. Значения можно изменить через `CONTEXT_MAX_MESSAGES` и `CONTEXT_TTL_MINUTES`. Перезапуск процесса очищает все временные диалоги.
 
@@ -110,7 +116,7 @@ Google/Tavily/Perplexity только добывают факты. Финаль�
 
 Пользователь из `NORA_INTERVIEWER_USER_ID` считается давним Интервьюером Норы. Она любит и часто предпочитает так к нему обращаться, но не обязана механически вставлять обращение в каждую реплику.
 
-По средам системный промпт включает сильную изобретательскую интерференцию: в подходящем разговоре идеи Норы могут доходить до канонического инженерного безумия. Практические и серьёзные ответы при этом должны оставаться точными и уместными.
+По средам системный промпт включает сильную изобретательскую интерференцию: идеи Норы доходят до канонического инженерного безумия, а советы обрастают безумными изобретательскими дополнениями. Локальная `src/core/personality.js` — источник её характера и этих правил.
 
 Запуск:
 

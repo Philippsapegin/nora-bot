@@ -1,7 +1,7 @@
 const packageInfo = require('../package.json');
 require('dotenv').config();
 
-// Собираем ключи для Native Google (Fallback или Search)
+// Каждый ключ Gemini может принадлежать отдельному проекту со своей квотой.
 const geminiKeys = [];
 if (process.env.GOOGLE_GEMINI_API_KEY) geminiKeys.push(process.env.GOOGLE_GEMINI_API_KEY);
 let i = 2;
@@ -11,6 +11,14 @@ while (process.env[`GOOGLE_GEMINI_API_KEY_${i}`]) {
 }
 
 console.log(`[CONFIG] Загружено ключей Gemini (Native): ${geminiKeys.length}`);
+
+const aiProvider = process.env.AI_PROVIDER || 'openai';
+if (!['google', 'openai'].includes(aiProvider)) {
+  throw new Error('AI_PROVIDER должен быть google или openai.');
+}
+if (aiProvider === 'google' && geminiKeys.length === 0) {
+  throw new Error('Для AI_PROVIDER=google нужен GOOGLE_GEMINI_API_KEY.');
+}
 
 const requiredModelVars = ['AI_MAIN_MODEL', 'AI_LOGIC_MODEL'];
 if (geminiKeys.length > 0) {
@@ -40,6 +48,7 @@ module.exports = {
   interviewerUserId: parseInt(process.env.NORA_INTERVIEWER_USER_ID || process.env.ADMIN_USER_ID, 10),
   
   // === ОСНОВНОЙ OPENAI-CОВМЕСТИМЫЙ API ===
+  aiProvider,
   aiBaseUrl,
   aiKey,
   usesOfficialOpenAI,
@@ -63,6 +72,7 @@ module.exports = {
   // === GEMINI NATIVE (FALLBACK / SEARCH) ===
   geminiKeys: geminiKeys,
   googleNativeModel: process.env.GOOGLE_NATIVE_MODEL,
+  googleSearchModel: process.env.GOOGLE_SEARCH_MODEL || process.env.GOOGLE_NATIVE_MODEL,
   fallbackModelName: process.env.GOOGLE_FALLBACK_MODEL,
   contextSize: Math.max(2, parseInt(process.env.CONTEXT_MAX_MESSAGES, 10) || 20),
   contextTtlMs: Math.max(1, parseInt(process.env.CONTEXT_TTL_MINUTES, 10) || 30) * 60 * 1000,

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Sych Bot is a Telegram bot with hybrid AI architecture (OpenAI GPT-6 Luna primary, Google Gemini fallback). It's a stateful conversational agent with character, memory, and autonomous decision-making capabilities. The bot operates primarily in Russian.
+Nora Bot is a Telegram bot with Gemini 3.8 Flash conversational generation and Gemini 3.5 Flash-Lite service logic. It's a stateful conversational agent with character, memory, and autonomous decision-making capabilities. The bot operates primarily in Russian.
 
-- **Node.js**: 18+ required
+- **Node.js**: 20+ required
 - **Package Type**: CommonJS
 - **Entry Point**: `src/index.js`
 
@@ -19,8 +19,8 @@ npm install        # Install dependencies
 
 ### Production Deployment (PM2)
 ```bash
-pm2 start src/index.js --name "sych-bot"
-pm2 restart sych-bot
+pm2 start src/index.js --name "nora-bot"
+pm2 restart nora-bot --update-env
 ```
 
 Legacy GitHub Actions deployment is disabled. Production is deployed manually to `/home/phil/nora-bot` and restarted through the `nora-bot` PM2 process.
@@ -52,6 +52,7 @@ src/
 │   └── personality.js # System prompts, bot personality and static responses
 ├── services/
 │   ├── ai.js          # Multi-provider AI service with fallback chain
+│   ├── gemini.js      # Google GenAI SDK, per-model project-key rotation
 │   ├── conversationMemory.js # Expiring per-user/per-topic dialogue context
 │   ├── loreMemory.js  # Local relevance retrieval for Nora's memories
 │   ├── telegramHealth.js # Polling watchdog, bounded requests and admin alerts
@@ -83,11 +84,14 @@ src/
 |---------|----------------------|-------|
 | Logic/Analysis | `AI_LOGIC_MODEL` | Context analysis, search routing, emoji selection |
 | Smart Responses | `AI_MAIN_MODEL` | Generate conversational replies |
-| Google Native | `GOOGLE_NATIVE_MODEL` | Native Gemini and Google Search |
+| Google Native | `GOOGLE_NATIVE_MODEL` | Gemini fallback for the optional OpenAI provider |
+| Google Search | `GOOGLE_SEARCH_MODEL` | Separate search model, currently Gemini 2.5 Flash-Lite |
 | Fallback | `GOOGLE_FALLBACK_MODEL` | Google Gemini fallback |
 | Perplexity Search | `PERPLEXITY_MODEL` | Search through OpenRouter |
 
-**Fallback chain**: OpenAI GPT-6 Luna → Google Gemini (rotates through multiple keys) → Admin notification
+**Default provider**: `AI_PROVIDER=google`. Gemini 3.8 Flash → per-model key rotation across projects → Gemini 3.7 Flash → Admin notification. Service JSON/text tasks use Flash-Lite without Nora's conversational system prompt. All conversational tasks (including profile descriptions) use the current personality and canonical lore. Search results survive fallback unchanged.
+
+The Google GenAI SDK uses bounded 60-second requests and no internal retries; project-key rotation is handled by `gemini.js`. Gemini 3.x Flash uses low thinking, Flash-Lite minimal thinking, and Gemini 2.5 Flash zero thinking budget. Thought parts are never published. The optional `AI_PROVIDER=openai` path is retained; an existing OpenAI key cannot override Google routing.
 
 ### Search Providers (configurable via `SEARCH_PROVIDER` env var)
 - Google (default; returns search facts to the primary model)
@@ -103,6 +107,7 @@ TELEGRAM_BOT_TOKEN     # From @BotFather
 ADMIN_USER_ID          # Your Telegram ID (controls admin features)
 NORA_INTERVIEWER_USER_ID # User Nora recognizes as her longtime Interviewer
 OPENAI_API_KEY         # OpenAI API key
+AI_PROVIDER            # google | openai; set explicitly in .env
 AI_API_KEY             # Optional generic key for another compatible provider
 OPENROUTER_API_KEY     # Optional OpenRouter key
 AI_BASE_URL            # Optional, defaults to the official OpenAI API
@@ -111,9 +116,10 @@ AI_LOGIC_MODEL         # Logic and JSON analysis model ID
 SEARCH_PROVIDER        # tavily | perplexity | google
 TAVILY_API_KEY         # If using Tavily search
 PERPLEXITY_MODEL       # Perplexity model ID when that provider is selected
-GOOGLE_GEMINI_API_KEY  # Required for fallback
+GOOGLE_GEMINI_API_KEY  # Required for the Google provider/search/fallback
 GOOGLE_GEMINI_API_KEY_2 # Optional additional keys for rotation
 GOOGLE_NATIVE_MODEL    # Native Gemini model ID
+GOOGLE_SEARCH_MODEL    # Search model; separate from conversational Gemini 3.x
 GOOGLE_FALLBACK_MODEL  # Gemini fallback model ID
 CONTEXT_MAX_MESSAGES   # Maximum messages in one temporary dialogue (default 20)
 CONTEXT_TTL_MINUTES    # Lifetime of each dialogue message (default 30 minutes)
@@ -136,7 +142,7 @@ The source lore is a 23-week author document. Runtime lore is a careful first-pe
 
 ### Wednesday behavior
 
-Wednesday in Asia/Yekaterinburg activates a strong system-level invention modifier. Nora approaches the canonical near-madness of ΩКРЫЛ, the self-aware teacup, and the Cathedral of Wednesdays when invention is relevant, while still answering practical or serious requests accurately.
+Wednesday in Asia/Yekaterinburg activates the author's local system-level invention modifier: near-madness of ΩКРЫЛ, the self-aware teacup, and the Cathedral of Wednesdays, with wild invention additions to advice. Preserve author edits in `src/core/personality.js`; Gemini receives that system prompt afresh on every conversational call.
 
 ## Profile System (User Memory)
 
